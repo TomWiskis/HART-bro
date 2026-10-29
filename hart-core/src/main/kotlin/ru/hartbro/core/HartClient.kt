@@ -45,11 +45,11 @@ class HartClient(
         return PrimaryVariable.parse(reply.data, reply.receivedAt) to reply.deviceStatus
     }
 
-    private suspend fun read(address: HartAddress, command: ReadCommand): HartReply = mutex.withLock {
+    suspend fun read(address: HartAddress, command: ReadCommand, data: ByteArray = byteArrayOf()): HartReply = mutex.withLock {
         for (attempt in 1..readAttempts) {
             transport.discardBufferedInput().forEach { log("STALE", "Накопленные данные до отправки запроса; не считаются его ответом", it) }
             val decoder = HartDecoder()
-            val request = HartCodec.request(address, command, preambles)
+            val request = HartCodec.request(address, command, preambles, data)
             val started = System.nanoTime()
             log("TX-FRAME", "Полный запрос: команда ${command.number}, попытка $attempt/$readAttempts", request)
             try {

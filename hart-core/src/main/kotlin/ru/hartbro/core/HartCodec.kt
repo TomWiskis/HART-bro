@@ -16,7 +16,10 @@ sealed class HartAddress(val bytes: ByteArray) {
     )
 }
 
-enum class ReadCommand(val number: Int) { IDENTITY(0), PRIMARY_VARIABLE(1) }
+enum class ReadCommand(val number: Int) {
+    IDENTITY(0), PRIMARY_VARIABLE(1), DYNAMIC_VARIABLES(3), CLASSIFICATIONS(8),
+    VARIABLES_WITH_STATUS(9), ADDITIONAL_STATUS(48), ASSIGNMENTS(50),
+}
 
 data class HartFrame(
     val delimiter: Int,
@@ -41,11 +44,14 @@ sealed interface DecodeEvent {
 }
 
 object HartCodec {
-    /** No general-purpose command sender is exposed: production can send only reads 0 and 1. */
-    fun request(address: HartAddress, command: ReadCommand, preambles: Int = 20): ByteArray {
+    /** Explicit read-only allowlist. Command 48 always uses the empty, non-acknowledging request. */
+    fun request(address: HartAddress, command: ReadCommand, preambles: Int = 20, data: ByteArray = byteArrayOf()): ByteArray {
         require(preambles in 5..255)
+        if (command == ReadCommand.VARIABLES_WITH_STATUS) {
+            require(data.size in 1..8 && data.all { it.u8() in 0..249 })
+        } else require(data.isEmpty()) { "Эта команда чтения не принимает аргументы" }
         val body = byteArrayOf(if (address is HartAddress.Long) 0x82.toByte() else 0x02) +
-            address.bytes + byteArrayOf(command.number.toByte(), 0)
+            address.bytes + byteArrayOf(command.number.toByte(), data.size.toByte()) + data
         return ByteArray(preambles) { 0xFF.toByte() } + body + checksum(body)
     }
 
