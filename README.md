@@ -2,9 +2,11 @@
 
 **0.2.0 — кандидат для аппаратного испытания.** Kotlin, Android 10+ (min 29, target 36), Compose / Material 3, Bluetooth Classic RFCOMM/SPP. Работа установленного приложения автономна, разрешения INTERNET нет. Application ID остаётся `ru.hartbro.app`.
 
-[APK 0.2.0](https://raw.githubusercontent.com/TomWiskis/HART-bro/downloads/hart-bro-0.2.0-debug.apk) · [Отчёт 0.2.0](docs/VALIDATION_0.2.0.md) · [Один комплексный сеанс испытаний](docs/METRAN_TEST_0.2.0.md) · [Полное задание и дальнейший план](docs/ROADMAP_CONTEXT.md).
+[Открыть APK 0.2.0 на GitHub](https://github.com/TomWiskis/HART-bro/blob/downloads/hart-bro-0.2.0-debug.apk) · [Отчёт 0.2.0](docs/VALIDATION_0.2.0.md) · [Один комплексный сеанс испытаний](docs/METRAN_TEST_0.2.0.md) · [Полное задание и дальнейший план](docs/ROADMAP_CONTEXT.md).
 
 **У APK 0.2.0 другой debug-сертификат. Исходный ключ 0.1.1 недоступен. Обновление поверх установленной 0.1.1 невозможно: используйте отдельный телефон без прежней установки. Не удаляйте 0.1.1 ради этой проверки.** Это тестовая сборка, не релиз Google Play. Прежние APK 0.1.0/0.1.1 и материалы остаются в ветке `downloads`. До 0.1.1 можно вернуться на телефоне, где она сохранена.
+
+Скачивание: откройте страницу APK по ссылке выше и нажмите **Download raw file** (кнопка скачивания). Если GitHub показывает 404 даже для страницы репозитория, войдите в аккаунт с доступом к `TomWiskis/HART-bro`. Прямая ссылка `raw.githubusercontent.com` может быть недоступна без авторизации.
 
 ## Возможности 0.2.0
 
