@@ -2,8 +2,8 @@
 
 **Внимание: другой debug-сертификат, исходный ключ 0.1.1 недоступен. APK 0.2.0 нельзя установить поверх 0.1.1. Используйте отдельный телефон без прежней установки; не удаляйте 0.1.1 ради испытания.** Application ID остался `ru.hartbro.app`. Предыдущие APK ниже сохранены.
 
-- [Скачать APK 0.2.0 для Android 10+](hart-bro-0.2.0-debug.apk), versionCode 3.
-- [Результаты 106 тестов и Lint](hart-bro-0.2.0-test-results.zip): 0 падений/ошибок/пропусков; Lint 0 ошибок, 1 предупреждение.
+- [Скачать APK 0.2.0 для Android 10+](https://raw.githubusercontent.com/TomWiskis/HART-bro/downloads/hart-bro-0.2.0-debug.apk), versionCode 3.
+- [Результаты 106 тестов и Lint](https://raw.githubusercontent.com/TomWiskis/HART-bro/downloads/hart-bro-0.2.0-test-results.zip): 0 падений/ошибок/пропусков; Lint 0 ошибок, 1 предупреждение.
 - [Исходный коммит](https://github.com/TomWiskis/HART-bro/commit/8830502).
 - [Полный отчёт и ограничения](https://github.com/TomWiskis/HART-bro/blob/feature/0.2.0-monitoring/docs/VALIDATION_0.2.0.md).
 - [Один комплексный сеанс на Метран-150](https://github.com/TomWiskis/HART-bro/blob/feature/0.2.0-monitoring/docs/METRAN_TEST_0.2.0.md).
