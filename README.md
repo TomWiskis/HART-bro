@@ -1,3 +1,17 @@
+# HART-бро 0.2.0 — тестовая сборка мониторинга
+
+**Внимание: другой debug-сертификат, исходный ключ 0.1.1 недоступен. APK 0.2.0 нельзя установить поверх 0.1.1. Используйте отдельный телефон без прежней установки; не удаляйте 0.1.1 ради испытания.** Application ID остался `ru.hartbro.app`. Предыдущие APK ниже сохранены.
+
+- [Скачать APK 0.2.0 для Android 10+](hart-bro-0.2.0-debug.apk), versionCode 3.
+- [Результаты 106 тестов и Lint](hart-bro-0.2.0-test-results.zip): 0 падений/ошибок/пропусков; Lint 0 ошибок, 1 предупреждение.
+- [Исходный коммит](https://github.com/TomWiskis/HART-bro/commit/8830502).
+- [Полный отчёт и ограничения](https://github.com/TomWiskis/HART-bro/blob/feature/0.2.0-monitoring/docs/VALIDATION_0.2.0.md).
+- [Один комплексный сеанс на Метран-150](https://github.com/TomWiskis/HART-bro/blob/feature/0.2.0-monitoring/docs/METRAN_TEST_0.2.0.md).
+
+Только чтение 0/1/3/8/9/48/50; мониторинг, общий график, foreground service, ручной архив, восстановление до 60 секунд. На оборудовании 0.2.0 ещё не испытывалась. Контрольные суммы — в SHA256SUMS. Приватные ключи в репозиторий не включены.
+
+---
+
 # HART-бро: скачать приложение
 
 [**Скачать APK 0.1.1 для Android 10+**](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.1.1-debug.apk) · около 27 МиБ.
