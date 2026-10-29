@@ -1,20 +1,26 @@
-# Скачать HART-бро для Android
+# HART-бро: скачать приложение
 
-[**Скачать APK 0.1.0**](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.1.0-debug.apk)
+[**Скачать APK 0.1.1 для Android 10+**](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.1.1-debug.apk) · около 27 МиБ.
 
-Android 10 и новее; размер 28,192,117 байтов. Это отладочная сборка прототипа первого этапа с тестовой подписью.
+[Скачать отчёты 58 автоматических тестов и дамп](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.1.1-test-results.zip).
 
-Скопируйте APK на телефон, откройте файл и разрешите установку из выбранного браузера или файлового менеджера. Если GitHub показывает страницу файла вместо скачивания, нажмите «Download raw file».
+## Исправление первого этапа
 
-**Аппаратная приёмка ещё не выполнена.** Для проверки нужен реальный VIATOR HM-MT-BT-EX-010041 и HART-датчик на отдельной лабораторной петле. Прототип выполняет только чтение командами 0 и 1, без записи параметров.
+Реальный ответ Метрана с четырьмя FF принимается с предупреждением после проверки структуры, длины и XOR. Сохраняются неполные Bluetooth-фрагменты; исправлено отображение полного типа 0x9972/производителя 0x0099; добавлены названия единиц, расшифровка статусов и полные TX/RX-кадры в HEX.
 
-- [Исходники](https://github.com/TomWiskis/HART-bro/tree/main) · коммит `a90a31b91f08a037e35c5d67d73bf470bfd90901`.
-- [Установка и сборка](https://github.com/TomWiskis/HART-bro/blob/main/README.md).
-- [Первое испытание с VIATOR](https://github.com/TomWiskis/HART-bro/blob/main/docs/FIRST_VIATOR_TEST.md).
-- [Результаты программных проверок](https://github.com/TomWiskis/HART-bro/blob/main/docs/VALIDATION.md): 34 теста прошли, APK собран, подпись проверена.
+**58 тестов прошли, ошибок и пропусков нет.** Проверены целый дамп, все разбиения, побайтовый приём и 250 вариантов фрагментации. Lint: 0 ошибок, одно уведомление о новой версии корутин. Подпись APK проверена и совпадает с 0.1.0 — можно обновить существующую установку. Скопируйте APK на телефон, откройте его и разрешите установку из выбранного приложения. Если открыта страница файла, используйте «Download raw file».
 
-SHA-256:
+**Аппаратная проверка 0.1.1 ещё не выполнена.** Для одного сеанса на реальном Метране подготовлен [план испытания](https://github.com/TomWiskis/HART-bro/blob/66e33a9ef01e24eb9c13ea1f172d63802210a5a6/docs/METRAN_RETEST_0.1.1.md). Команды записи, калибровки, сброса статусов, USB OTG и непрерывный мониторинг не добавлялись.
+
+- [Все исправления](https://github.com/TomWiskis/HART-bro/blob/66e33a9ef01e24eb9c13ea1f172d63802210a5a6/CHANGELOG.md).
+- [Результаты проверок](https://github.com/TomWiskis/HART-bro/blob/66e33a9ef01e24eb9c13ea1f172d63802210a5a6/docs/VALIDATION.md).
+- [Исходники 0.1.1](https://github.com/TomWiskis/HART-bro/tree/66e33a9ef01e24eb9c13ea1f172d63802210a5a6), коммит `66e33a9ef01e24eb9c13ea1f172d63802210a5a6`.
+- [Предыдущая 0.1.0](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.1.0-debug.apk) сохранена для истории; повторное испытание выполняйте версией 0.1.1.
+
+## SHA-256
 
 ```text
-fadbe3c120bcf1b52dc2a48c45d11f4ab4db9ae194cbdf246b7006b34c6659eb
+fadbe3c120bcf1b52dc2a48c45d11f4ab4db9ae194cbdf246b7006b34c6659eb  hart-bro-0.1.0-debug.apk
+69bfca11fa1f354fa798ff6f358e8ff2ee0d4cd9a389db5b5da2aef60f90904b  hart-bro-0.1.1-debug.apk
+7aab1fff2aa5e66b99c4cedc4dc32b36bd0c15c52026b9f53af031925d53d72d  hart-bro-0.1.1-test-results.zip
 ```
