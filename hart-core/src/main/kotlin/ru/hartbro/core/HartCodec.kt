@@ -1,13 +1,14 @@
 package ru.hartbro.core
 
-/** No Android or modem-specific dependencies. Only normal, unexpanded HART frames in phase 1. */
+/** No Android or modem-specific dependencies. Only safe read requests are generated. */
 sealed class HartAddress(val bytes: ByteArray) {
     class Short(pollingAddress: Int, primaryMaster: Boolean = true) : HartAddress(
         byteArrayOf((pollingAddress.also { require(it in 0..63) } or if (primaryMaster) 0x80 else 0).toByte()),
     )
     class Long(deviceType: Int, deviceId: Int, primaryMaster: Boolean = true) : HartAddress(
         byteArrayOf(
-            (((deviceType.also { require(it in 0..0x3FFF) } shr 8) and 0x3F) or if (primaryMaster) 0x80 else 0).toByte(),
+            // Keep all 16 type bits in the identity. Only the wire address reserves two host bits.
+            (((deviceType.also { require(it in 0..0xFFFF) } shr 8) and 0x3F) or if (primaryMaster) 0x80 else 0).toByte(),
             deviceType.toByte(),
             (deviceId.also { require(it in 0..0xFFFFFF) } shr 16).toByte(),
             (deviceId shr 8).toByte(), deviceId.toByte(),
@@ -24,9 +25,14 @@ data class HartFrame(
     /** Response payload includes response code + device status, unlike a request payload. */
     val payload: ByteArray,
     val raw: ByteArray,
+    val preambleCount: Int,
+    val expansionBytes: ByteArray,
 ) {
     val isResponse: Boolean get() = (delimiter and 7) == 6
     val isBurst: Boolean get() = (delimiter and 7) == 1
+    val preambleWarning: String? get() = if (preambleCount < 5)
+        "Нестандартная преамбула: $preambleCount FF вместо минимум 5; кадр принят после проверки длины и XOR"
+        else null
 }
 
 sealed interface DecodeEvent {
@@ -50,6 +56,7 @@ object HartCodec {
 class HartDecoder {
     private var buffer = byteArrayOf()
     val hasPartialFrame: Boolean get() = buffer.isNotEmpty()
+    val pendingByteCount: Int get() = buffer.size
     fun reset(): ByteArray = buffer.also { buffer = byteArrayOf() }
 
     fun accept(bytes: ByteArray): List<DecodeEvent> {
@@ -72,12 +79,19 @@ class HartDecoder {
             val preambles = buffer.indexOfFirst { it.u8() != 255 }
             if (preambles < 0) break
             val delimiter = buffer[preambles].u8()
-            if (preambles < 5 || delimiter !in setOf(0x02, 0x82, 0x06, 0x86, 0x01, 0x81)) {
-                events += DecodeEvent.Rejected("Неподдерживаемый разделитель или короткая преамбула", buffer.copyOfRange(0, preambles + 1))
+            // Some VIATOR captures contain four received FF bytes. This tolerance never changes TX.
+            // Wait for the entire frame and validate its checksum before reporting it as accepted.
+            val supportedDelimiter = (delimiter and 0x18) == 0 && (delimiter and 7) in setOf(1, 2, 6)
+            if (preambles < 4 || !supportedDelimiter) {
+                val reason = if (preambles < 4) "Короткая преамбула: $preambles FF, требуется минимум 4 при приёме"
+                    else "Неподдерживаемый разделитель 0x%02X".format(delimiter)
+                events += DecodeEvent.Rejected(reason, buffer.copyOfRange(0, preambles + 1))
                 buffer = buffer.copyOfRange(preambles + 1, buffer.size); continue
             }
             val addressSize = if (delimiter and 0x80 != 0) 5 else 1
-            val headerSize = preambles + 1 + addressSize + 2
+            val expansionSize = (delimiter and 0x60) shr 5
+            val expansionStart = preambles + 1 + addressSize
+            val headerSize = expansionStart + expansionSize + 2
             if (buffer.size < headerSize) break
             val count = buffer[headerSize - 1].u8()
             val total = headerSize + count + 1
@@ -89,13 +103,14 @@ class HartDecoder {
                 buffer = buffer.copyOfRange(1, buffer.size); continue
             }
             buffer = buffer.copyOfRange(total, buffer.size)
-            val response = delimiter and 7 in setOf(6, 1)
+            val response = (delimiter and 7) in setOf(6, 1)
             if (response && count < 2) {
                 events += DecodeEvent.Rejected("В ответе отсутствуют код ответа и статус", raw); continue
             }
             events += DecodeEvent.Frame(HartFrame(
                 delimiter, raw.copyOfRange(preambles + 1, preambles + 1 + addressSize),
                 raw[headerSize - 2].u8(), raw.copyOfRange(headerSize, headerSize + count), raw,
+                preambles, raw.copyOfRange(expansionStart, expansionStart + expansionSize),
             ))
         }
         return events

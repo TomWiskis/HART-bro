@@ -35,6 +35,8 @@ class HartClient(
         val reply = read(HartAddress.Short(0), ReadCommand.IDENTITY)
         val identity = DeviceIdentity.parse(reply.data)
         preambles = maxOf(20, identity.minimumRequestPreambles)
+        log("IDENTITY", "HART ${identity.hartRevision}; ${identity.manufacturerDescription}; тип 0x%04X; ID %06X; ПО %d; ревизия устройства %d"
+            .format(identity.deviceType, identity.deviceId, identity.softwareRevision, identity.deviceRevision))
         return identity to reply.deviceStatus
     }
 
@@ -49,26 +51,30 @@ class HartClient(
             val decoder = HartDecoder()
             val request = HartCodec.request(address, command, preambles)
             val started = System.nanoTime()
-            log("TX", "Команда ${command.number}, попытка $attempt/$readAttempts", request)
+            log("TX-FRAME", "Полный запрос: команда ${command.number}, попытка $attempt/$readAttempts", request)
             try {
                 return@withLock withTimeout(timeoutMillis) {
                     transport.write(request)
                     var result: HartReply? = null
                     while (result == null) {
                         val bytes = transport.receive()
-                        log("RX", "Получено ${bytes.size} байт", bytes)
+                        log("RX-CHUNK", "Фрагмент Bluetooth: ${bytes.size} байт", bytes)
                         for (event in decoder.accept(bytes)) {
                             when (event) {
                                 is DecodeEvent.Rejected -> log("FRAME", event.reason, event.raw)
                                 is DecodeEvent.Frame -> {
                                     val frame = event.value
+                                    log("RX-FRAME", "Полный кадр: разделитель 0x%02X, команда %d, преамбула %d FF, адрес %s, расширение %d байт"
+                                        .format(frame.delimiter, frame.command, frame.preambleCount, frame.address.hex(), frame.expansionBytes.size), frame.raw)
+                                    frame.preambleWarning?.let { log("WARN", it) }
                                     if (!frame.isResponse || frame.command != command.number || !frame.address.contentEquals(address.bytes)) {
                                         log("IGNORE", "Эхо, burst или ответ другой команде/адресу", frame.raw)
                                         continue
                                     }
                                     val code = frame.payload[0].u8()
                                     val status = frame.payload[1].u8()
-                                    log("HART", "Команда ${command.number}: код $code, статус 0x%02X, %.0f мс".format(status, (System.nanoTime() - started) / 1e6))
+                                    log("HART", "Команда ${command.number}: код 0x%02X (%s); статус 0x%02X (%s); %.0f мс"
+                                        .format(code, HartStatus.responseDescription(code), status, HartStatus.deviceDescription(status), (System.nanoTime() - started) / 1e6))
                                     if (code != 0) throw HartResponseException(code, status)
                                     result = HartReply(frame.payload.copyOfRange(2, frame.payload.size), status, Instant.now())
                                     break

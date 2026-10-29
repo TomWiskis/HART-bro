@@ -29,6 +29,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import ru.hartbro.app.session.SessionState
 import ru.hartbro.app.session.SessionViewModel
+import ru.hartbro.core.HartStatus
 
 class MainActivity : ComponentActivity() {
     private val model: SessionViewModel by viewModels()
@@ -51,7 +52,7 @@ class MainActivity : ComponentActivity() {
                     enableBluetooth = { enableBluetooth.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) },
                     pairDevice = { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                     copyDiagnostics = {
-                        val text = "HART-бро 0.1.0 · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n" +
+                        val text = "HART-бро ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n" +
                             state.diagnostics.joinToString("\n\n") { it.text() }
                         getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Диагностика HART", text))
                     },
@@ -81,7 +82,7 @@ private fun HartApp(
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showOtherDevices by rememberSaveable { mutableStateOf(false) }
-    Scaffold(topBar = { TopAppBar(title = { Text("HART-бро · прототип связи") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("HART-бро ${BuildConfig.VERSION_NAME} · связь") }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             PrimaryTabRow(selectedTabIndex = tab) {
                 listOf("Связь", "Результат", "HEX").forEachIndexed { index, title ->
@@ -178,29 +179,26 @@ private fun ResultPanel(state: SessionState, onRead: () -> Unit) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("HART ${identity.hartRevision}", style = MaterialTheme.typography.titleMedium)
             Text("Уникальный адрес: ${identity.uniqueKey}", fontFamily = FontFamily.Monospace)
-            Text("Производитель: ${identity.manufacturerCode?.let { "код 0x%04X".format(it) } ?: "не сообщён в доступной части ответа"}")
+            Text("Производитель: ${identity.manufacturerDescription}")
             Text("Модель: тип 0x%04X".format(identity.deviceType))
             Text("Ревизия ПО прибора: ${identity.softwareRevision}")
+            Text("Ревизия команд устройства: ${identity.deviceRevision}; аппаратная ревизия: ${identity.hardwareRevision}")
+            identity.extendedDeviceStatus?.let { Text("Расширенный статус из команды 0: 0x%02X".format(it)) }
             Text("Коды показаны без предположений о торговом названии. Профили моделей появятся на последующих этапах.", style = MaterialTheme.typography.bodySmall)
         }
     }
     state.deviceStatus?.let { status ->
         Text("Статус прибора: 0x%02X".format(status))
-        if (status != 0) Text(deviceStatusDescription(status), color = MaterialTheme.colorScheme.error)
+        Text(HartStatus.deviceDescription(status), color = if (status != 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
     }
     val variable = state.primaryVariable
     if (variable != null) {
         Text("Основная цифровая переменная · команда 1")
         Text("${variable.value} ${variable.unit}", style = MaterialTheme.typography.headlineLarge)
+        Text("Единица: ${variable.unitName} (код HART ${variable.unitCode})")
         val time = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss.SSS XXX").withZone(ZoneId.systemDefault()).format(variable.receivedAt)
         Text("Ответ получен: $time", style = MaterialTheme.typography.bodySmall)
         Text("Разовое измерение. Значение получено из HART, без пересчёта тока 4–20 мА.")
     } else Text("Достоверного значения основной переменной пока нет.")
     if (state.connected && identity != null) Button(onClick = onRead, enabled = !state.busy) { Text("Считать снова") }
 }
-
-private fun deviceStatusDescription(status: Int): String = listOf(
-    0x80 to "неисправность прибора", 0x40 to "конфигурация изменена", 0x20 to "холодный запуск",
-    0x10 to "доступен расширенный статус", 0x08 to "ток зафиксирован", 0x04 to "насыщение токового выхода",
-    0x02 to "дополнительная переменная вне пределов", 0x01 to "основная переменная вне пределов",
-).filter { status and it.first != 0 }.joinToString("; ") { it.second }

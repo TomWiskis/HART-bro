@@ -20,7 +20,7 @@ class HartCodecTest {
     @Test fun invalidAddressesAndPreamblesAreRejected() {
         assertThrows(IllegalArgumentException::class.java) { HartAddress.Short(64) }
         assertThrows(IllegalArgumentException::class.java) { HartAddress.Short(-1) }
-        assertThrows(IllegalArgumentException::class.java) { HartAddress.Long(0x4000, 1) }
+        assertThrows(IllegalArgumentException::class.java) { HartAddress.Long(0x10000, 1) }
         assertThrows(IllegalArgumentException::class.java) { HartAddress.Long(1, 0x1000000) }
         assertThrows(IllegalArgumentException::class.java) { HartCodec.request(HartAddress.Short(0), ReadCommand.IDENTITY, 4) }
     }
@@ -68,8 +68,10 @@ class HartCodecTest {
         val malformed = hex("FF FF FF FF FF 06 80 00 01 00 87")
         assertTrue(HartDecoder().accept(malformed).single() is DecodeEvent.Rejected)
     }
-    @Test fun expandedDelimiterIsReportedRatherThanGuessed() {
-        assertTrue(HartDecoder().accept(hex("FF FF FF FF FF A6")).single() is DecodeEvent.Rejected)
+    @Test fun expandedHeaderRemainsBufferedUntilComplete() {
+        val decoder = HartDecoder()
+        assertTrue(decoder.accept(hex("FF FF FF FF FF A6")).isEmpty())
+        assertEquals(6, decoder.pendingByteCount)
     }
     @Test fun excessiveUnframedInputIsBounded() {
         val events = HartDecoder().accept(ByteArray(9000) { 0xFF.toByte() } + goldenPv)

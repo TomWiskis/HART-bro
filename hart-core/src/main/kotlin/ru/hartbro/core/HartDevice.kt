@@ -12,9 +12,17 @@ data class DeviceIdentity(
     val minimumRequestPreambles: Int,
     val softwareRevision: Int,
     val raw: ByteArray,
+    val deviceRevision: Int,
+    val hardwareRevision: Int,
+    val physicalSignalingCode: Int,
+    val extendedDeviceStatus: Int?,
 ) {
     val address: HartAddress.Long get() = HartAddress.Long(deviceType, deviceId)
     val uniqueKey: String get() = "%04X-%06X".format(deviceType, deviceId)
+    val manufacturerName: String? get() = manufacturerCode?.let(HartManufacturers::name)
+    val manufacturerDescription: String get() = manufacturerCode?.let {
+        "${manufacturerName ?: "Неизвестный производитель"} (0x%04X)".format(it)
+    } ?: "не сообщён в доступной части ответа"
 
     companion object {
         fun parse(data: ByteArray): DeviceIdentity {
@@ -24,26 +32,24 @@ data class DeviceIdentity(
             require(revision in 5..7) { "HART $revision пока не поддержан (реализованы ревизии 5–7)" }
             // Rev. 5 uses the legacy manufacturer byte; rev. 6/7 use expanded device type.
             val manufacturer = when {
-                revision == 5 -> data[1].u8() and 0x3F
+                revision == 5 -> data[1].u8()
                 data.size >= 19 -> (data[17].u8() shl 8) or data[18].u8()
                 else -> null
             }
             return DeviceIdentity(
-                revision, ((data[1].u8() and 0x3F) shl 8) or data[2].u8(),
+                revision, (data[1].u8() shl 8) or data[2].u8(),
                 (data[9].u8() shl 16) or (data[10].u8() shl 8) or data[11].u8(),
                 manufacturer, data[3].u8().coerceAtLeast(5), data[6].u8(), data.copyOf(),
+                data[5].u8(), data[7].u8() shr 3, data[7].u8() and 7,
+                if (revision >= 6 && data.size >= 17) data[16].u8() else null,
             )
         }
     }
 }
 
 data class PrimaryVariable(val value: Float, val unitCode: Int, val receivedAt: Instant, val raw: ByteArray) {
-    val unit: String get() = when (unitCode) {
-        1 -> "inH₂O (68 °F)"; 2 -> "inHg (0 °C)"; 3 -> "ftH₂O (68 °F)"; 4 -> "mmH₂O (68 °F)"
-        5 -> "mmHg (0 °C)"; 6 -> "psi"; 7 -> "bar"; 8 -> "mbar"; 9 -> "g/cm²"; 10 -> "kg/cm²"
-        11 -> "Pa"; 12 -> "kPa"; 13 -> "torr"; 14 -> "atm"; 32 -> "°C"; 33 -> "°F"; 34 -> "°R"; 35 -> "K"
-        else -> "Единица HART: $unitCode"
-    }
+    val unit: String get() = HartUnits.find(unitCode)?.symbol ?: "Единица HART: $unitCode"
+    val unitName: String get() = HartUnits.find(unitCode)?.name ?: "неизвестная единица HART $unitCode"
     companion object {
         fun parse(data: ByteArray, receivedAt: Instant): PrimaryVariable {
             require(data.size == 5) { "Команда 1: ожидается 5 байтов, получено ${data.size}" }
@@ -56,6 +62,6 @@ data class PrimaryVariable(val value: Float, val unitCode: Int, val receivedAt: 
 
 data class HartReply(val data: ByteArray, val deviceStatus: Int, val receivedAt: Instant)
 class HartResponseException(val responseCode: Int, val deviceStatus: Int) : Exception(
-    if (responseCode and 0x80 != 0) "HART: ошибка связи 0x%02X; статус 0x%02X".format(responseCode, deviceStatus)
-    else "HART: код ответа %d; статус 0x%02X".format(responseCode, deviceStatus),
+    "HART: ${HartStatus.responseDescription(responseCode)} (код 0x%02X); статус 0x%02X: %s"
+        .format(responseCode, deviceStatus, HartStatus.deviceDescription(deviceStatus)),
 )

@@ -149,4 +149,39 @@ class HartClientTest {
             assertArrayEquals(goldenIdentity, events.single { it.kind == "STALE" }.bytes)
         }
     }
+    @Test fun realMetranCaptureReplaysThroughClientThenUsesUniqueAddressForPv() = runTest {
+        for (seed in 0 until 30) {
+            val transport = SimulatedTransport { _, n -> randomChunks(if (n == 1) metranIdentity else metranSyntheticPv, seed) }
+            val events = mutableListOf<DiagnosticEntry>()
+            val client = HartClient(transport, events::add)
+            val (identity, status) = client.identify()
+            val (pv, pvStatus) = client.primaryVariable(identity)
+            assertEquals("Метран", identity.manufacturerName)
+            assertEquals("9972-5FCA7F", identity.uniqueKey)
+            assertEquals(0, status)
+            assertEquals(0, pvStatus)
+            assertEquals(12.5f, pv.value, 0f)
+            assertEquals("бар", pv.unitName)
+            assertEquals(2, transport.writes.size)
+            assertEquals(1, events.count { it.kind == "WARN" && it.message.contains("4 FF") })
+            assertEquals(2, events.count { it.kind == "TX-FRAME" })
+            val rxFrames = events.filter { it.kind == "RX-FRAME" }
+            assertEquals(2, rxFrames.size)
+            assertArrayEquals(metranIdentity, rxFrames[0].bytes)
+            assertArrayEquals(metranSyntheticPv, rxFrames[1].bytes)
+            assertTrue(events.none { it.kind == "TIMEOUT" })
+            assertArrayEquals(HartCodec.request(identity.address, ReadCommand.PRIMARY_VARIABLE), transport.writes[1])
+        }
+    }
+    @Test fun successfulResponseStillExposesNonzeroDeviceStatus() = runTest {
+        val statusReply = changedFrame(goldenIdentity) { it[10] = 0x81.toByte() }
+        val transport = SimulatedTransport { _, _ -> listOf(statusReply) }
+        val events = mutableListOf<DiagnosticEntry>()
+        val (_, status) = HartClient(transport, events::add).identify()
+        assertEquals(0x81, status)
+        val text = events.single { it.kind == "HART" }.message
+        assertTrue(text.contains("неисправность прибора"))
+        assertTrue(text.contains("основная переменная вне пределов"))
+        assertEquals(1, transport.writes.size)
+    }
 }
