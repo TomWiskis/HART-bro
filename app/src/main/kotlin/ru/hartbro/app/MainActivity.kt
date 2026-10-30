@@ -65,8 +65,12 @@ class MainActivity : ComponentActivity() {
                     confirm = { if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                         notifications.launch(Manifest.permission.POST_NOTIFICATIONS) else model.controller.confirmConnection() },
                     copy = { lifecycleScope.launch {
-                        val text = withContext(Dispatchers.IO) { model.controller.diagnosticText() }
-                        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Диагностика HART", text))
+                        try {
+                            val text = withContext(Dispatchers.IO) { model.controller.diagnosticText() }
+                            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Диагностика HART", text))
+                            model.controller.notice("Доступный текст скопирован; полный журнал можно сохранить в TXT")
+                        } catch (e: CancellationException) { throw e
+                        } catch (e: Exception) { model.controller.notice("Буфер обмена недоступен: ${e.message}. Сохраните TXT.") }
                     } },
                     saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex)
             }
@@ -102,6 +106,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
             Column(Modifier.fillMaxSize().testTag(if (tab == 2 && archiveId != null) "archiveScroll" else "sectionScroll").verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(monitor.message, style = MaterialTheme.typography.titleMedium)
                 state.notice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                if (state.diagnosticIncomplete) Text("HEX-журнал неполон: достигнут предел. Сохраните доступный TXT и очистите буфер.", color = MaterialTheme.colorScheme.error)
                 if (monitor.phase == MonitorPhase.CONNECTING) LinearProgressIndicator(Modifier.fillMaxWidth())
                 monitor.recovery?.let { RecoveryPanel(it) }
                 when (tab) {
@@ -187,7 +192,6 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                             Switch(state.detailedDiagnostics, c::detailedDiagnostics)
                             Text("Подробно: RX-CHUNK")
                         }
-                        if (state.diagnosticIncomplete) Text("Журнал неполон: достигнут предел буфера. Сохраните доступные данные и очистите журнал.", color = MaterialTheme.colorScheme.error)
                         Button(onClick = saveHex) { Text("Сохранить HEX-журнал") }
                         OutlinedButton(onClick = shareHex) { Text("Поделиться TXT") }
                         OutlinedButton(onClick = copy, enabled = state.diagnostics.isNotEmpty()) { Text("Копировать журнал") }

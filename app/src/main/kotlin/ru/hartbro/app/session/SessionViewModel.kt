@@ -42,6 +42,7 @@ class SessionController(private val app: Application, private val connectionFact
     private var engine: MonitoringEngine? = null
     private var observer: Job? = null
     private var promptShown = false
+    @Volatile private var serviceLease = 0L
     private val adapter get() = app.getSystemService(BluetoothManager::class.java)?.adapter
     init { history.cleanOrphans(); refreshArchives() }
     fun append(entry: DiagnosticEntry) {
@@ -66,6 +67,11 @@ class SessionController(private val app: Application, private val connectionFact
     fun activityLifecycle(event: String) {
         val m = state.value.monitor
         append(DiagnosticEntry(Instant.now(), "ACTIVITY", "$event; active=${state.value.active}; id=${m.identity?.uniqueKey}; started=${m.startedAt}; phase=${m.phase}; service=${state.value.serviceRunning}"))
+    }
+    @Synchronized fun serviceCreated(): Long {
+        serviceLease++
+        serviceLifecycle("onCreate; lease=$serviceLease", true)
+        return serviceLease
     }
     fun serviceLifecycle(event: String, running: Boolean? = null) {
         if (running != null) mutableState.update { it.copy(serviceRunning = running) }
@@ -171,10 +177,14 @@ class SessionController(private val app: Application, private val connectionFact
         engine?.stop(reason); observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
         history.discard()
         event("Сессия завершена; временная история удалена")
-        mutableState.update { it.copy(active = false, monitor = MonitorState()) }
         app.stopService(Intent(app, MonitoringService::class.java))
+        mutableState.update { it.copy(active = false, monitor = MonitorState()) }
     }
-    fun serviceDestroyed() { scope.launch { archiveActions.withLock { if (state.value.active) endNow("Foreground service уничтожена системой / stopService") } } }
+    fun serviceDestroyed(lease: Long) { scope.launch { archiveActions.withLock {
+        if (lease != serviceLease) { serviceLifecycle("Устаревший onDestroy lease=$lease; текущий=$serviceLease; сессия сохранена"); return@withLock }
+        serviceLifecycle("onDestroy; lease=$lease", false)
+        if (state.value.active) endNow("Foreground service уничтожена системой / stopService")
+    } } }
     fun refreshArchives() { scope.launch { try { val entries = history.list(); mutableState.update { it.copy(archives = entries) } } catch (e: Exception) { notice("Ошибка журнала: ${e.message}") } } }
     fun delete(id: String) { scope.launch { try { history.delete(id); refreshArchives() } catch (e: Exception) { notice("Ошибка удаления: ${e.message}") } } }
 }

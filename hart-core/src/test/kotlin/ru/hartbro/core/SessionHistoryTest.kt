@@ -93,9 +93,17 @@ class SessionHistoryTest {
                 val buffer=java.io.ByteArrayOutputStream();java.io.DataOutputStream(buffer).use{it.writeLong(at);it.writeUTF(text)}
                 out.writeInt(buffer.size()+1);out.writeByte(2);out.write(buffer.toByteArray())
             }
-            event(1,"Пауза");event(2,"Связь восстановлена; идентификатор проверен")
+            fun measurement(at:Long,value:Float){
+                val buffer=java.io.ByteArrayOutputStream();java.io.DataOutputStream(buffer).use{
+                    it.writeLong(at);it.writeInt(0);it.writeFloat(Float.NaN);it.writeInt(-1);it.writeLong(-1);it.writeLong(-1);it.writeInt(1)
+                    it.writeUTF("PV");it.writeFloat(value);it.writeInt(12);it.writeInt(0);it.writeLong(at);it.writeInt(9);it.writeInt(246);it.writeInt(65);it.writeInt(192)
+                }
+                out.writeInt(buffer.size()+1);out.writeByte(1);out.write(buffer.toByteArray())
+            }
+            measurement(10,12.5f);event(20,"Пауза");event(30,"Связь восстановлена; идентификатор проверен");measurement(40,13.5f)
         }
         val before=file.readBytes();val view=h.view(name)!!
-        assertEquals("old-session",view.info.id);assertEquals(2,view.events.size);assertArrayEquals(before,file.readBytes())
+        assertEquals("old-session",view.info.id);assertEquals(2,view.events.size);assertEquals(listOf(12.5f,13.5f),view.points.map{it.measurement.value})
+        assertNotEquals(view.points[0].segment,view.points[1].segment);assertArrayEquals(before,file.readBytes())
     }
 }

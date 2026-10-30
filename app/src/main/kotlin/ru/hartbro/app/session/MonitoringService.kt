@@ -19,10 +19,11 @@ class MonitoringService : Service() {
     private val controller get() = (application as HartApplication).controller
     private var wakeLock: PowerManager.WakeLock? = null
     private var ready = false
+    private var lease = 0L
     override fun onBind(intent: Intent?) = null
     override fun onCreate() {
         super.onCreate()
-        controller.serviceLifecycle("onCreate", true)
+        lease = controller.serviceCreated()
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("monitor", "HART-мониторинг", NotificationManager.IMPORTANCE_LOW))
         try {
             startForeground(20, notification("Подключение к прибору…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
@@ -83,8 +84,8 @@ class MonitoringService : Service() {
             .addAction(Notification.Action.Builder(null, "Открыть сессию", open).build()).build()
     }
     override fun onDestroy() {
-        controller.serviceLifecycle("onDestroy: foreground service остановлена", false)
+        controller.serviceLifecycle("onDestroy получен; lease=$lease")
         scope.cancel(); if (wakeLock?.isHeld == true) wakeLock?.release()
-        controller.serviceDestroyed(); super.onDestroy()
+        controller.serviceDestroyed(lease); super.onDestroy()
     }
 }

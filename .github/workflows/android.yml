@@ -46,7 +46,38 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: ./gradlew :app:connectedDebugAndroidTest --no-daemon
+          script: bash -o pipefail -c './gradlew :app:connectedDebugAndroidTest --no-daemon 2>&1 | tee /tmp/android-regression-gradle.log'
+      - name: Verify Android regression results
+        if: always()
+        run: |
+          python3 - <<'PYTEST'
+          import glob, xml.etree.ElementTree as ET
+          counts = {key: 0 for key in ('tests', 'failures', 'errors', 'skipped')}
+          names = set()
+          def annotation(level, text):
+              text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::{level} title=Android regression::{text}')
+          for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
+              root = ET.parse(path).getroot()
+              suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
+              for suite in suites:
+                  for key in counts:
+                      counts[key] += int(suite.get(key, '0'))
+                  for case in suite.iter('testcase'):
+                      names.add(case.get('name'))
+                      for failure in list(case.findall('failure')) + list(case.findall('error')):
+                          annotation('error', (case.get('name', '') + ': ' + (failure.text or failure.get('message', '')))[:5000])
+          expected = {'homeScreenLockAndActivityRecreationKeepOneForegroundSession', 'archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList'}
+          passed = counts['tests'] >= 2 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
+          annotation('notice' if passed else 'error', str(counts))
+          if not counts['tests']:
+              try:
+                  text = open('/tmp/android-regression-gradle.log').read()
+                  annotation('error', text[-5000:])
+              except FileNotFoundError:
+                  annotation('error', 'Android runner produced no JUnit results or Gradle log')
+          assert passed, counts
+          PYTEST
       - uses: actions/upload-artifact@v4
         if: always()
         with:
