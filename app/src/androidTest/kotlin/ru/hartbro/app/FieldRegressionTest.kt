@@ -71,7 +71,10 @@ class FieldRegressionTest {
         while (!check() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100)
         assertTrue("Condition not reached before deadline: ${app.controller.state.value.monitor}", check())
     }
+    private var previousScreenTimeout = ""
     @Before fun reset() {
+        previousScreenTimeout = device.executeShellCommand("settings get system screen_off_timeout").trim()
+        device.executeShellCommand("settings put system screen_off_timeout 1200000")
         device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
         app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
         app.controller.deleteMany(app.controller.state.value.archives.map { it.first }.toSet())
@@ -90,12 +93,19 @@ class FieldRegressionTest {
         device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
         app.controller.end(); waitFor { app.controller.state.value.monitor.startedAt == null }
         app.controller.disconnect(); waitFor { !app.controller.state.value.active && !app.controller.state.value.serviceRunning }
+        if (previousScreenTimeout.toLongOrNull() != null) device.executeShellCommand("settings put system screen_off_timeout $previousScreenTimeout")
     }
-    private fun observeFor(duration: Long, started: Instant?, key: String) {
+    private fun returnToApp() {
+        device.executeShellCommand("am start -W -n ${app.packageName}/.MainActivity")
+        waitFor { device.currentPackageName == app.packageName }
+    }
+    private fun observeFor(duration: Long, started: Instant?, key: String, screenOn: Boolean, foregroundPackage: String? = null) {
         var previous = app.samples.get(); var end = app.controller.history.bounds()!!.second
         val deadline = SystemClock.elapsedRealtime() + duration
         while (SystemClock.elapsedRealtime() < deadline) {
             SystemClock.sleep(5000)
+            assertEquals("Unexpected screen power state", screenOn, device.isScreenOn)
+            if (foregroundPackage != null) assertEquals("Expected application must actually be foreground", foregroundPackage, device.currentPackageName)
             assertTrue("No samples while Android lifecycle changed", app.samples.get() > previous); previous = app.samples.get()
             assertTrue("History did not advance", app.controller.history.bounds()!!.second > end); end = app.controller.history.bounds()!!.second
             assertTrue(app.controller.state.value.serviceRunning)
@@ -107,17 +117,18 @@ class FieldRegressionTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             start(scenario)
             val started = app.controller.state.value.monitor.startedAt; val key = app.controller.state.value.monitor.identity!!.uniqueKey
-            observeFor(300000, started, key) // five actual minutes foreground
-            device.sleep(); observeFor(300000, started, key) // five actual minutes screen off
+            observeFor(300000, started, key, true, app.packageName) // five actual minutes foreground
+            device.sleep(); observeFor(300000, started, key, false) // five actual minutes screen off
             device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
             scenario.onActivity { app.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            observeFor(300000, started, key) // five actual minutes with Settings in foreground
+            waitFor { device.currentPackageName == "com.android.settings" }
+            observeFor(300000, started, key, true, "com.android.settings") // five actual minutes with Settings in foreground
             repeat(3) {
                 device.pressHome(); SystemClock.sleep(1200)
-                app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
-                SystemClock.sleep(1200)
+                returnToApp(); SystemClock.sleep(1200)
             }
             scenario.recreate()
+            assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
             assertEquals(started, app.controller.state.value.monitor.startedAt)
             scenario.onActivity { app.startService(Intent(app, MonitoringService::class.java)) }
             SystemClock.sleep(1500); assertTrue(app.controller.state.value.active)
@@ -170,7 +181,8 @@ class FieldRegressionTest {
             waitFor { app.controller.state.value.monitor.phase == MonitorPhase.ERROR }
             assertNull(app.controller.history.bounds()); assertNull(app.controller.state.value.monitor.startedAt)
             assertTrue(app.controller.diagnosticText().contains("initial identification timeout"))
-            app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            returnToApp()
+            assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
             assertEquals(MonitorPhase.ERROR, app.controller.state.value.monitor.phase)
         }
     }
@@ -184,7 +196,8 @@ class FieldRegressionTest {
             SystemClock.sleep(2000)
             assertEquals(samples, app.samples.get()); assertEquals(connects + 1, app.connections.get())
             assertNull(app.controller.history.bounds()); assertNull(app.controller.state.value.monitor.startedAt)
-            app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            returnToApp()
+            assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
             assertEquals(MonitorPhase.READY, app.controller.state.value.monitor.phase)
         }
     }
