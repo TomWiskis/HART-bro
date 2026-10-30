@@ -1,3 +1,18 @@
+# HART-бро 0.3.0 — сессии, журнал и отчёты
+
+- [Скачать APK 0.3.0 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.3.0-debug.apk?download=1), versionCode 5.
+- [Результаты проверок](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.3.0-test-results.zip?download=1).
+- [CI окончательной ревизии](https://github.com/TomWiskis/HART-bro/actions/runs/41074800362).
+- [Изменения, конфигурация и ограничения](https://github.com/TomWiskis/HART-bro/blob/main/docs/CHANGES_0.3.0.md), [подробный отчёт](https://github.com/TomWiskis/HART-bro/blob/main/docs/VALIDATION_0.3.0.md), [единый аппаратный сценарий](https://github.com/TomWiskis/HART-bro/blob/main/docs/METRAN_TEST_0.3.0.md).
+
+Устанавливайте **поверх 0.2.1 без удаления приложения/очистки данных**, предварительно сохранив важную текущую сессию. Application ID и сертификат опубликованных 0.2.0/0.2.1 сохранены: SHA-256 сертификата `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`. APK из произвольного Actions-run может иметь другой debug-ключ; для обновления используйте опубликованный файл здесь. Для закрытого репозитория войдите в GitHub в том же браузере.
+
+139 JVM-тестов и 11 Android-тестов прошли без ошибок/пропусков; APK собран, Lint — 0 ошибок/1 предупреждение. Android-проверка включает новые измерения при 5 минутах видимого экрана, 5 минутах блокировки, 5 минутах другого приложения, а также сессии/журнал/восстановление/PDF/CSV. Программный транспорт входит только в androidTest; новая версия ещё требует аппаратного испытания на VIATOR/Метране. Команд записи нет. Контрольные суммы — в SHA256SUMS.
+
+Предыдущие сборки и их исторические описания ниже сохранены.
+
+---
+
 # HART-бро 0.2.1 — исправления по аппаратному испытанию 0.2.0
 
 - [Скачать APK 0.2.1 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.2.1-debug.apk?download=1), versionCode 4.
