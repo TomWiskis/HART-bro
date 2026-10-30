@@ -28,6 +28,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Free runner disk space for API 36
+        run: |
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          du -sh /usr/share/dotnet /opt/ghc /usr/share/swift /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          # Unused toolchains on this disposable Android-only runner; keep Java, Gradle and Android SDK.
+          sudo rm -rf -- /usr/share/dotnet /opt/ghc /usr/share/swift /opt/hostedtoolcache/CodeQL
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -39,11 +46,31 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Diagnose space before installing API 36 image
+        run: |
+          avd_parent="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+          mkdir -p "$avd_parent"
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$ANDROID_HOME" "$avd_parent"
+          python3 - <<'PYSPACE'
+          import os, shutil
+          path = os.environ.get('ANDROID_AVD_HOME', os.path.expanduser('~/.android/avd'))
+          free = shutil.disk_usage(path).free
+          minimum = 10 * 1024**3  # Image download/unpack, 2 GiB userdata, Gradle outputs and margin.
+          print(f'AVD filesystem: {free / 1024**3:.2f} GiB free; required headroom: {minimum / 1024**3:.0f} GiB')
+          assert free >= minimum, 'Runner has insufficient disk headroom for Android API 36'
+          PYSPACE
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
           arch: x86_64
           target: google_apis
+          avd-name: hartbro-api36
+          disk-size: 2048M
+          ram-size: 2048M
+          heap-size: 256M
+          pre-emulator-launch-script: |
+            df -h "${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+            du -sh "${ANDROID_AVD_HOME:-$HOME/.android/avd}"
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash -o pipefail -c './gradlew :app:connectedDebugAndroidTest --no-daemon 2>&1 | tee /tmp/android-regression-gradle.log'
