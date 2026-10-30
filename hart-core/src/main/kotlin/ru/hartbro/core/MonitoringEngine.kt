@@ -6,13 +6,17 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.channels.Channel
 
 interface MonitorConnection : AutoCloseable {
     suspend fun identify(): DeviceIdentity
     suspend fun discover(): MeasurementBatch
     suspend fun sample(): MeasurementBatch
+    suspend fun configuration(): ConfigurationSnapshot = ConfigurationSnapshot()
+    fun resetSession() {}
+    val isOpen: Boolean get() = true
 }
-enum class MonitorPhase { IDLE, CONNECTING, MONITORING, PAUSED, RECOVERING, DECISION, DIFFERENT_DEVICE, ERROR }
+enum class MonitorPhase { IDLE, CONNECTING, READY, MONITORING, PAUSED, RECOVERING, DECISION, DIFFERENT_DEVICE, ERROR }
 enum class LossReason { BLUETOOTH, HART, UNKNOWN }
 data class RecoveryProgress(val reason: LossReason, val startedMillis: Long, val deadlineMillis: Long,
                             val nowMillis: Long, val attempt: Int = 0, val lastAttempt: String = "Подготовка") {
@@ -23,10 +27,12 @@ data class MonitorState(
     val phase: MonitorPhase = MonitorPhase.IDLE, val identity: DeviceIdentity? = null,
     val latest: MeasurementBatch? = null, val bluetoothConnected: Boolean = false,
     val message: String = "Сессия не начата", val periodMillis: Long = 2000,
+    val configuration: ConfigurationSnapshot = ConfigurationSnapshot(),
     val startedAt: Instant? = null, val revision: Long = 0, val recovery: RecoveryProgress? = null,
 )
 interface SessionSink {
     fun begin(identity: DeviceIdentity, at: Instant)
+    fun configuration(snapshot: ConfigurationSnapshot) {}
     fun sample(batch: MeasurementBatch)
     fun event(at: Instant, text: String)
     fun gap(at: Instant, text: String) = event(at, text)
@@ -41,6 +47,7 @@ class MonitoringEngine(
     private val mutableState = MutableStateFlow(MonitorState())
     val state = mutableState.asStateFlow()
     private var job: Job? = null
+    private val sessionStarts = Channel<Unit>(Channel.CONFLATED)
     private val controls = Any()
     @Volatile private var connection: MonitorConnection? = null
     @Volatile private var paused = false
@@ -49,16 +56,32 @@ class MonitoringEngine(
             bluetoothConnected = connection != null, revision = it.revision + 1,
             recovery = if (phase == MonitorPhase.RECOVERING) it.recovery else null) }
     }
-    fun start() {
-        check(job == null) { "Сессия уже начата" }
+    fun startSession() {
+        if (state.value.phase != MonitorPhase.READY) return
+        if (job == null) start() else sessionStarts.trySend(Unit)
+    }
+    fun start(automaticSession: Boolean = true) {
+        check(job == null) { "Подключение уже начато" }
+        publish(MonitorPhase.CONNECTING, "Подключение Bluetooth и идентификация HART…")
         job = scope.launch {
             try {
                 publish(MonitorPhase.CONNECTING, "Подключение Bluetooth и идентификация HART…")
-                connection = connect()
-                val identity = connection!!.identify()
+                if (connection == null || connection?.isOpen != true) connection = connect()
+                var identity = connection!!.identify()
+                var config = connection!!.configuration()
+                mutableState.update { it.copy(identity = identity, configuration = config) }
+                if (!automaticSession) {
+                    publish(MonitorPhase.READY, "Прибор определён. Можно начать сессию")
+                    sessionStarts.receive()
+                    publish(MonitorPhase.CONNECTING, "Проверка прибора перед новой сессией…")
+                    identity = connection!!.identify()
+                    config = connection!!.configuration()
+                }
+                connection!!.resetSession()
+                sink.configuration(config)
                 val now = wallTime()
                 sink.begin(identity, now)
-                mutableState.update { it.copy(identity = identity, startedAt = now) }
+                mutableState.update { it.copy(identity = identity, configuration = config, startedAt = now) }
                 try {
                     val initial = connection!!.discover()
                     synchronized(controls) {
@@ -108,7 +131,7 @@ class MonitoringEngine(
             } catch (e: Exception) {
                 closeConnection()
                 runCatching { sink.event(wallTime(), "Остановка: ${e.message}") }
-                publish(if (state.value.identity != null) MonitorPhase.DECISION else MonitorPhase.ERROR, "Остановка: ${e.message}")
+                publish(if (state.value.startedAt != null) MonitorPhase.DECISION else MonitorPhase.ERROR, "Остановка: ${e.message}")
             }
         }
     }
@@ -187,6 +210,15 @@ class MonitoringEngine(
             return
         }
         publish(if (value) MonitorPhase.PAUSED else MonitorPhase.MONITORING, if (value) "Опрос приостановлен" else "Опрос возобновлён")
+    }
+    suspend fun finishSession() {
+        job?.cancelAndJoin(); job = null
+        paused = false
+        while (sessionStarts.tryReceive().isSuccess) { /* no queued duplicate starts */ }
+        if (connection?.isOpen != true) closeConnection()
+        mutableState.update { it.copy(startedAt = null, latest = null, recovery = null) }
+        publish(if (connection != null) MonitorPhase.READY else MonitorPhase.IDLE,
+            if (connection != null) "Сессия завершена. Bluetooth подключён" else "Сессия завершена. Подключите коммуникатор")
     }
     suspend fun stop(reason: String = "Завершено пользователем") {
         runCatching { sink.event(wallTime(), "Остановка мониторинга: $reason") }

@@ -30,6 +30,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.*
 import ru.hartbro.app.session.*
+import ru.hartbro.app.reports.SessionPdf
+import java.io.File
+import java.io.OutputStream
 import ru.hartbro.core.*
 
 class MainActivity : ComponentActivity() {
@@ -45,6 +48,49 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { model.controller.notice("Ошибка сохранения HEX: ${e.message}") }
         }
     }
+    private data class ExportRequest(val id: String, val pdf: Boolean, val separator: Char)
+    private var pendingExport: ExportRequest? = null
+    private val savePdf = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri -> finishExport(uri) }
+    private val saveCsv = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri -> finishExport(uri) }
+    private fun writeReport(request: ExportRequest, output: OutputStream) {
+        if (request.pdf) SessionPdf.write(model.controller.history, request.id, output)
+        else SessionCsv.write(model.controller.history, request.id, output, request.separator)
+    }
+    private fun finishExport(uri: android.net.Uri?) {
+        val request = pendingExport; pendingExport = null
+        if (request == null || uri == null) return
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri, "wt")?.use { writeReport(request, it) } ?: error("Файл недоступен") }
+                model.controller.notice("Отчёт сохранён")
+            } catch (e: Exception) { model.controller.notice("Ошибка экспорта: ${e.message}") }
+        }
+    }
+    private fun export(id: String, pdf: Boolean, share: Boolean, separator: Char) {
+        val request = ExportRequest(id, pdf, separator)
+        val extension = if (pdf) "pdf" else "csv"
+        if (!share) {
+            pendingExport = request
+            if (pdf) savePdf.launch("hart-$id.$extension") else saveCsv.launch("hart-$id.$extension")
+            return
+        }
+        lifecycleScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    val directory = File(cacheDir, "report-exports").apply { mkdirs() }
+                    directory.listFiles()?.sortedByDescending { it.lastModified() }?.drop(5)?.forEach { it.delete() }
+                    File(directory, "hart-$id-${System.currentTimeMillis()}.$extension").also { file -> file.outputStream().use { writeReport(request, it) } }
+                }
+                val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(if (pdf) "application/pdf" else "text/csv")
+                    .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Отправить отчёт"))
+            } catch (e: Exception) { model.controller.notice("Ошибка экспорта: ${e.message}") }
+        }
+    }
+    override fun onSaveInstanceState(outState: Bundle) {
+        pendingExport?.let { outState.putString("exportId", it.id); outState.putBoolean("exportPdf", it.pdf); outState.putInt("exportSeparator", it.separator.code) }
+        super.onSaveInstanceState(outState)
+    }
     private fun shareHex() { lifecycleScope.launch {
         try {
             val file = withContext(Dispatchers.IO) { model.controller.shareHex() }
@@ -55,6 +101,7 @@ class MainActivity : ComponentActivity() {
     } }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
+        savedInstanceState?.getString("exportId")?.let { pendingExport = ExportRequest(it, savedInstanceState.getBoolean("exportPdf"), savedInstanceState.getInt("exportSeparator", 59).toChar()) }
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 val state by model.state.collectAsStateWithLifecycle()
@@ -72,7 +119,7 @@ class MainActivity : ComponentActivity() {
                         } catch (e: CancellationException) { throw e
                         } catch (e: Exception) { model.controller.notice("Буфер обмена недоступен: ${e.message}. Сохраните TXT.") }
                     } },
-                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex)
+                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex, export = ::export)
             }
         }
     }
@@ -85,18 +132,17 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun HartApp(state: SessionState, c: SessionController, permission: () -> Unit, enableBluetooth: () -> Unit,
-                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit) {
+                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (String, Boolean, Boolean, Char) -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showOther by rememberSaveable { mutableStateOf(false) }
     var endPrompt by remember { mutableStateOf(false) }
-    var deleteId by remember { mutableStateOf<String?>(null) }
     var archiveId by rememberSaveable { mutableStateOf<String?>(null) }
     var clearHexPrompt by remember { mutableStateOf(false) }
     var technical by remember { mutableStateOf(false) }
     val scroll = remember(tab, archiveId) { ScrollState(0) }
     BackHandler(enabled = tab == 2 && archiveId != null) { archiveId = null }
     val monitor = state.monitor
-    val decision = state.active && monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE)
+    val decision = monitor.startedAt != null && monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE)
     Scaffold(topBar = { TopAppBar(title = { Text("HART-бро ${BuildConfig.VERSION_NAME}") },
         navigationIcon = { if (tab == 2 && archiveId != null) TextButton(onClick = { archiveId = null }, modifier = Modifier.testTag("archiveBack")) { Text("К списку") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -131,10 +177,15 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                                 }
                             } }
                         }
+                        if (state.active && monitor.startedAt == null) OutlinedButton(onClick = c::disconnect) { Text("Отключить коммуникатор") }
                         Text("В фоне работает видимая служба с уведомлением. Разрешите уведомления, чтобы получать запрос решения после потери связи. Android может остановить процесс; после принудительного завершения автоматического продолжения нет.", style = MaterialTheme.typography.bodySmall)
                     }
                     1 -> {
                         Text("Bluetooth: ${if (monitor.bluetoothConnected) "подключён" else "нет связи"}")
+                        if (monitor.startedAt == null) {
+                            Button(onClick = c::beginSession, enabled = monitor.phase == MonitorPhase.READY, modifier = Modifier.testTag("startSession")) { Text("Начать сессию") }
+                            if (!state.active) TextButton(onClick = { tab = 0 }) { Text("Перейти к подключению") }
+                        }
                         TextButton(onClick = { technical = !technical }) { Text(if (technical) "Скрыть сведения" else "Сведения о приборе и справка") }
                         monitor.identity?.let { d ->
                             Text("${d.manufacturerDescription} · ID ${d.uniqueKey}")
@@ -164,27 +215,13 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                             listOf(1L, 2L, 5L, 10L).forEach { sec -> FilterChip(selected = monitor.periodMillis == sec * 1000, onClick = { c.period(sec * 1000) }, label = { Text("$sec с") }) }
                         }
                         if (monitor.phase in setOf(MonitorPhase.MONITORING, MonitorPhase.PAUSED)) Button(onClick = { c.pause(monitor.phase != MonitorPhase.PAUSED) }) { Text(if (monitor.phase == MonitorPhase.PAUSED) "Продолжить" else "Приостановить") }
-                        if (state.active && monitor.identity != null) {
+                        if (monitor.startedAt != null) {
                             Button(onClick = { c.save() }, enabled = !state.saving) { Text(if (state.saving) "Сохранение…" else "Сохранить сессию") }
-                            MonitoringChart(c.history, null, monitor.revision, latest)
+                            key(monitor.startedAt) { MonitoringChart(c.history, null, monitor.revision, latest, monitor.configuration.range?.label ?: "Диапазон неизвестен") }
                         }
                         TextButton(onClick = { tab = 3 }) { Text("Открыть диагностику") }
                     }
-                    2 -> {
-                        Text("Сохранённые сессии", style = MaterialTheme.typography.titleLarge)
-                        Text("Сюда попадают только снимки, сохранённые вами. Повторное сохранение создаёт новую запись.")
-                        OutlinedButton(onClick = c::refreshArchives) { Text("Обновить журнал") }
-                        if (archiveId == null) {
-                            if (state.archives.isEmpty()) Text("Сохранённых сессий нет")
-                            state.archives.forEach { (id, info) -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
-                                Text("${timeLabel(info.startedAt)} · ${info.deviceKey}\n${info.manufacturer}\n${info.communicator}")
-                                OutlinedButton(onClick = { archiveId = id }) { Text("Открыть") }
-                                TextButton(onClick = { deleteId = id }) { Text("Удалить…") }
-                            } } }
-                        } else {
-                            MonitoringChart(c.history, archiveId, 0)
-                        }
-                    }
+                    2 -> JournalScreen(state, c, archiveId, { archiveId = it }, export)
                     3 -> {
                         Text("Технический обмен и события сессии", style = MaterialTheme.typography.titleLarge)
                         Text("Полный временный журнал до 16 МиБ. В списке — последние события. Копия содержит адрес Bluetooth и HART ID.")
@@ -201,12 +238,12 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         } }
                     }
                 }
-                if (state.active) OutlinedButton(onClick = { endPrompt = true }, enabled = !state.saving) { Text("Завершить сессию…") }
+                if (monitor.startedAt != null) OutlinedButton(onClick = { endPrompt = true }, enabled = !state.saving) { Text("Завершить сессию…") }
             }
         }
     }
     state.pendingConnection?.let { d -> AlertDialog(onDismissRequest = c::cancelConnectionPrompt,
-        title = { Text("Подключить ${d.name}?") }, text = { Text("${d.address}\nБудет начат непрерывный опрос безопасными командами чтения. Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
+        title = { Text("Подключить ${d.name}?") }, text = { Text("${d.address}\nБудут установлены Bluetooth-соединение и идентификация датчика. Измерительная сессия запускается отдельно кнопкой «Начать сессию». Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
         confirmButton = { TextButton(onClick = { confirm(); tab = 1 }) { Text("Подключить") } }, dismissButton = { TextButton(onClick = c::cancelConnectionPrompt) { Text("Отмена") } }) }
     if (decision || endPrompt) AlertDialog(onDismissRequest = { if (!decision) endPrompt = false },
         title = { Text(if (monitor.phase == MonitorPhase.DIFFERENT_DEVICE) "Обнаружен другой прибор" else if (decision) "Связь не восстановлена" else "Завершить сессию?") },
@@ -217,10 +254,8 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         text = { Text("Сначала сохраните нужные данные в TXT. Сохранённые вами файлы не удаляются.") },
         confirmButton = { TextButton(onClick = { c.clearDiagnostics(); clearHexPrompt = false }) { Text("Очистить") } },
         dismissButton = { TextButton(onClick = { clearHexPrompt = false }) { Text("Отмена") } })
-    deleteId?.let { id -> AlertDialog(onDismissRequest = { deleteId = null }, title = { Text("Удалить сохранённую сессию?") },
-        text = { Text("Запись будет удалена из локального журнала.") }, confirmButton = { TextButton(onClick = { c.delete(id); deleteId = null }) { Text("Удалить") } },
-        dismissButton = { TextButton(onClick = { deleteId = null }) { Text("Отмена") } }) }
 }
+
 internal fun qualityText(q: Quality) = when(q) {
     Quality.GOOD -> "Качество хорошее"; Quality.UNVERIFIED -> "Индивидуальное качество не сообщено"
     Quality.UNCERTAIN -> "Качество неопределённое"; Quality.FIXED -> "Значение зафиксировано"

@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
@@ -17,23 +18,39 @@ import androidx.test.uiautomator.UiDevice
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
+import java.io.IOException
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.delay
 import ru.hartbro.app.session.*
 import ru.hartbro.core.*
 
-/** Instrumentation-only transport. These values are never part of the shipped application. */
+/** Instrumentation-only transport; never packaged in the production APK. */
 class FieldRegressionApplication : HartApplication() {
-    val samples = AtomicInteger()
+    val samples = AtomicInteger(); val connections = AtomicInteger(); val hartFailures = AtomicInteger(); val bluetoothFailures = AtomicInteger()
+    @Volatile var hartDeviceId = 0x5FCA7F
+    @Volatile var identifyDelay = 0L
+    @Volatile var failIdentity = false
     override fun createController() = SessionController(this) {
+        connections.incrementAndGet()
         object : MonitorConnection {
-            override suspend fun identify() = DeviceIdentity.parse("FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(" ").map { it.toInt(16).toByte() }.toByteArray())
+            private var open = true
+            override val isOpen get() = open
+            override suspend fun identify(): DeviceIdentity {
+                delay(identifyDelay)
+                if (failIdentity) throw HartTimeoutException("Instrumentation: initial identification timeout")
+                return DeviceIdentity.parse("FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(" ").map { it.toInt(16).toByte() }.toByteArray()).copy(deviceId = hartDeviceId)
+            }
+            override suspend fun configuration() = ConfigurationSnapshot(mapOf("tag" to ConfigValue("TEST-METRAN", 13),
+                "rangeUnit" to ConfigValue("12", 15, 12), "lowerRange" to ConfigValue("0.0", 15, 12), "upperRange" to ConfigValue("40.0", 15, 12)))
             override suspend fun discover() = sample()
             override suspend fun sample(): MeasurementBatch {
+                if (bluetoothFailures.getAndUpdate { (it - 1).coerceAtLeast(0) } > 0) throw IOException("Instrumentation: RFCOMM lost")
+                if (hartFailures.getAndUpdate { (it - 1).coerceAtLeast(0) } > 0) throw HartTimeoutException("Instrumentation: no HART reply")
                 samples.incrementAndGet(); val now = Instant.now()
                 return MeasurementBatch(listOf(Measurement("PV", 1.25f, 12, Quality.GOOD, now, 9)), 0, now)
             }
-            override fun close() {}
+            override fun close() { open = false }
         }
     }
 }
@@ -50,69 +67,134 @@ class FieldRegressionTest {
     private val app get() = instrumentation.targetContext.applicationContext as FieldRegressionApplication
     private val device get() = UiDevice.getInstance(instrumentation)
     private fun waitFor(check: () -> Boolean) {
-        val deadline = SystemClock.elapsedRealtime() + 15000
+        val deadline = SystemClock.elapsedRealtime() + 20000
         while (!check() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100)
-        assertTrue("Condition not reached before deadline", check())
+        assertTrue("Condition not reached before deadline: ${app.controller.state.value.monitor}", check())
+    }
+    @Before fun reset() {
+        device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
+        app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
+        app.controller.deleteMany(app.controller.state.value.archives.map { it.first }.toSet())
+        waitFor { app.controller.state.value.archives.isEmpty() }
+    }
+    private fun connect(scenario: ActivityScenario<MainActivity>) {
+        scenario.onActivity { app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", "00:11:22:33:44:55").putExtra("name", "Instrumentation-only")) }
+        waitFor { app.controller.state.value.monitor.phase == MonitorPhase.READY }
+        assertNull(app.controller.history.bounds()); assertNull(app.controller.state.value.monitor.startedAt)
     }
     private fun start(scenario: ActivityScenario<MainActivity>) {
-        scenario.onActivity {
-            app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", "00:11:22:33:44:55").putExtra("name", "Instrumentation-only"))
-        }
-        waitFor { app.controller.state.value.monitor.latest != null }
-        app.controller.period(1000)
+        connect(scenario); app.controller.beginSession()
+        waitFor { app.controller.state.value.monitor.latest != null }; app.controller.period(1000)
     }
-    @After fun stop() { app.controller.end(); waitFor { !app.controller.state.value.active } }
-
+    @After fun stop() {
+        device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
+        app.controller.end(); waitFor { app.controller.state.value.monitor.startedAt == null }
+        app.controller.disconnect(); waitFor { !app.controller.state.value.active && !app.controller.state.value.serviceRunning }
+    }
+    private fun observeFor(duration: Long, started: Instant?, key: String) {
+        var previous = app.samples.get(); var end = app.controller.history.bounds()!!.second
+        val deadline = SystemClock.elapsedRealtime() + duration
+        while (SystemClock.elapsedRealtime() < deadline) {
+            SystemClock.sleep(5000)
+            assertTrue("No samples while Android lifecycle changed", app.samples.get() > previous); previous = app.samples.get()
+            assertTrue("History did not advance", app.controller.history.bounds()!!.second > end); end = app.controller.history.bounds()!!.second
+            assertTrue(app.controller.state.value.serviceRunning)
+            assertEquals(started, app.controller.state.value.monitor.startedAt)
+            assertEquals(key, app.controller.state.value.monitor.identity!!.uniqueKey)
+        }
+    }
     @Test fun homeScreenLockAndActivityRecreationKeepOneForegroundSession() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             start(scenario)
-            val started = app.controller.state.value.monitor.startedAt
-            val key = app.controller.state.value.monitor.identity!!.uniqueKey
-            var previous = app.samples.get()
-            device.pressHome()
-            val deadline = SystemClock.elapsedRealtime() + 120000 // two actual minutes, not simulated Android time
-            while (SystemClock.elapsedRealtime() < deadline) {
-                SystemClock.sleep(5000)
-                assertTrue(app.samples.get() > previous); previous = app.samples.get()
-                assertTrue(app.controller.state.value.serviceRunning)
-                assertEquals(started, app.controller.state.value.monitor.startedAt)
-            }
-            device.sleep(); SystemClock.sleep(10000)
-            assertTrue(app.samples.get() > previous)
+            val started = app.controller.state.value.monitor.startedAt; val key = app.controller.state.value.monitor.identity!!.uniqueKey
+            observeFor(300000, started, key) // five actual minutes foreground
+            device.sleep(); observeFor(300000, started, key) // five actual minutes screen off
             device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
-            scenario.onActivity { app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
-            waitFor { app.controller.state.value.monitor.latest != null }
+            scenario.onActivity { app.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            observeFor(300000, started, key) // five actual minutes with Settings in foreground
+            repeat(3) {
+                device.pressHome(); SystemClock.sleep(1200)
+                app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                SystemClock.sleep(1200)
+            }
             scenario.recreate()
             assertEquals(started, app.controller.state.value.monitor.startedAt)
-            assertEquals(key, app.controller.state.value.monitor.identity!!.uniqueKey)
-            // Regression: empty service deliveries previously stopped an active session.
             scenario.onActivity { app.startService(Intent(app, MonitoringService::class.java)) }
-            SystemClock.sleep(1500)
-            assertTrue(app.controller.state.value.active)
+            SystemClock.sleep(1500); assertTrue(app.controller.state.value.active)
             assertTrue(app.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == 20 })
-            assertTrue(app.controller.diagnosticText().contains("onStop: Activity в фоне"))
-            val bounds = app.controller.history.bounds()!!
-            assertTrue(bounds.second - bounds.first >= 120000)
+            val diagnostics = app.controller.diagnosticText()
+            assertTrue(diagnostics.contains("onStop: Activity в фоне")); assertTrue(diagnostics.contains("lastTX=")); assertTrue(diagnostics.contains("lastMeasurement="))
+            assertTrue(app.controller.history.bounds()!!.second - app.controller.history.bounds()!!.first >= 900000)
         }
     }
     @Test fun archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             start(scenario)
-            repeat(2) {
-                app.controller.save()
-                waitFor { !app.controller.state.value.saving }
-                SystemClock.sleep(1200)
-            }
+            repeat(2) { app.controller.save(); waitFor { !app.controller.state.value.saving }; SystemClock.sleep(1200) }
             ui.onNodeWithText("Журнал", useUnmergedTree = true).performClick()
             ui.waitUntil(15000) { ui.onAllNodesWithText("Открыть").fetchSemanticsNodes().size >= 2 }
             ui.onAllNodesWithText("Открыть")[0].performScrollTo().performClick()
             ui.onNodeWithTag("archiveScroll").performTouchInput { repeat(4) { swipeUp() } }
             ui.onNodeWithTag("archiveBack").assertIsDisplayed().performClick()
             ui.onAllNodesWithText("Открыть")[1].performScrollTo().performClick()
-            ui.onNodeWithTag("archiveScroll").performTouchInput { swipeUp() }
-            device.pressBack()
+            ui.onNodeWithTag("archiveScroll").performTouchInput { swipeUp() }; device.pressBack()
             ui.onNodeWithText("Сохранённые сессии").assertIsDisplayed()
             assertTrue(app.controller.state.value.active)
+        }
+    }
+    @Test fun explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            connect(scenario); val connections = app.connections.get()
+            ui.onNodeWithText("Монитор", useUnmergedTree = true).performClick()
+            ui.onNodeWithTag("startSession").performScrollTo().performClick()
+            waitFor { app.controller.state.value.monitor.latest != null }
+            app.controller.pause(true); waitFor { app.controller.state.value.monitor.phase == MonitorPhase.PAUSED }
+            val end = app.controller.history.bounds()!!.second; SystemClock.sleep(2200)
+            assertEquals(end, app.controller.history.bounds()!!.second)
+            app.controller.pause(false); waitFor { app.controller.state.value.monitor.latest != null }
+            app.controller.save(); waitFor { !app.controller.state.value.saving && app.controller.state.value.archives.size == 1 }
+            val saved = app.controller.state.value.archives.single().second
+            assertEquals("TEST-METRAN", saved.configuration.tag)
+            app.controller.end(); waitFor { app.controller.state.value.monitor.phase == MonitorPhase.READY }
+            assertNull(app.controller.history.bounds()); assertEquals(connections, app.connections.get())
+            app.hartDeviceId = 1; app.controller.beginSession(); waitFor { app.controller.state.value.monitor.latest != null }
+            assertEquals("9972-000001", app.controller.history.view()!!.info.deviceKey)
+            assertEquals(connections, app.connections.get()); assertNotEquals(saved.deviceKey, app.controller.state.value.monitor.identity!!.uniqueKey)
+        }
+    }
+    @Test fun initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession() {
+        app.identifyDelay = 3000; app.failIdentity = true
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", "00:11:22:33:44:55")) }
+            waitFor { app.controller.state.value.monitor.phase == MonitorPhase.CONNECTING }; device.pressHome()
+            waitFor { app.controller.state.value.monitor.phase == MonitorPhase.ERROR }
+            assertNull(app.controller.history.bounds()); assertNull(app.controller.state.value.monitor.startedAt)
+            assertTrue(app.controller.diagnosticText().contains("initial identification timeout"))
+            app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertEquals(MonitorPhase.ERROR, app.controller.state.value.monitor.phase)
+        }
+    }
+    @Test fun temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            start(scenario); val started = app.controller.state.value.monitor.startedAt; val connects = app.connections.get()
+            var samples = app.samples.get(); app.hartFailures.set(3)
+            waitFor { app.hartFailures.get() == 0 && app.samples.get() > samples }
+            assertEquals(connects, app.connections.get()); assertEquals(started, app.controller.state.value.monitor.startedAt)
+            samples = app.samples.get(); app.bluetoothFailures.set(1)
+            waitFor { app.bluetoothFailures.get() == 0 && app.samples.get() > samples }
+            assertEquals(connects + 1, app.connections.get()); assertEquals(started, app.controller.state.value.monitor.startedAt)
+            assertTrue(app.controller.diagnosticText().contains("Связь восстановлена; идентификатор проверен"))
+            assertTrue(app.controller.history.view()!!.events.any { it.second.startsWith("Связь потеряна") })
+        }
+    }
+    @Test fun serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            start(scenario); val bounds = app.controller.history.bounds()
+            scenario.onActivity { app.stopService(Intent(app, MonitoringService::class.java)) }
+            waitFor { !app.controller.state.value.serviceRunning && app.controller.state.value.monitor.phase == MonitorPhase.DECISION }
+            assertNotNull(app.controller.history.bounds()); assertEquals(bounds!!.first, app.controller.history.bounds()!!.first)
+            assertTrue(app.controller.state.value.archives.isEmpty())
+            app.controller.save(true); waitFor { app.controller.state.value.monitor.startedAt == null && app.controller.state.value.archives.size == 1 }
         }
     }
 }

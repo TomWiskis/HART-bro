@@ -42,10 +42,16 @@ class SessionController(private val app: Application, private val connectionFact
     private var engine: MonitoringEngine? = null
     private var observer: Job? = null
     private var promptShown = false
+    @Volatile private var lastTx: Instant? = null
+    @Volatile private var lastRx: Instant? = null
+    @Volatile private var lastMeasurement: Instant? = null
+    @Volatile private var socketState = "нет соединения"
     @Volatile private var serviceLease = 0L
     private val adapter get() = app.getSystemService(BluetoothManager::class.java)?.adapter
     init { history.cleanOrphans(); refreshArchives() }
     fun append(entry: DiagnosticEntry) {
+        if (entry.kind == "TX-FRAME") lastTx = entry.time
+        if (entry.kind == "RX-CHUNK" || entry.kind == "RX-FRAME") lastRx = entry.time
         val accepted = runCatching { journal.append(entry) }.getOrElse {
             notice("Ошибка временного HEX-журнала: ${it.message}"); false
         }
@@ -66,7 +72,7 @@ class SessionController(private val app: Application, private val connectionFact
     }
     fun activityLifecycle(event: String) {
         val m = state.value.monitor
-        append(DiagnosticEntry(Instant.now(), "ACTIVITY", "$event; active=${state.value.active}; id=${m.identity?.uniqueKey}; started=${m.startedAt}; phase=${m.phase}; service=${state.value.serviceRunning}"))
+        append(DiagnosticEntry(Instant.now(), "ACTIVITY", "$event; active=${state.value.active}; id=${m.identity?.uniqueKey}; started=${m.startedAt}; phase=${m.phase}; service=${state.value.serviceRunning}; socket=$socketState; lastTX=$lastTx; lastRX=$lastRx; lastMeasurement=$lastMeasurement; noMeasurementMs=${lastMeasurement?.let { java.time.Duration.between(it, Instant.now()).toMillis() }}"))
     }
     @Synchronized fun serviceCreated(): Long {
         serviceLease++
@@ -92,12 +98,12 @@ class SessionController(private val app: Application, private val connectionFact
             }.sortedWith(compareByDescending<Communicator> { it.likelyViator }.thenBy { it.name }) else emptyList()
             mutableState.update { it.copy(permissionGranted = granted, bluetoothAvailable = bt != null, bluetoothEnabled = enabled, devices = devices) }
             val viators = devices.filter { it.likelyViator }
-            if (showPrompt && !promptShown && !state.value.active && viators.size == 1) {
+            if (showPrompt && !promptShown && !state.value.active && state.value.monitor.startedAt == null && viators.size == 1) {
                 promptShown = true; requestConnection(viators.single())
             }
         } catch (e: SecurityException) { notice("Нет разрешения Bluetooth: ${e.message}") }
     }
-    fun requestConnection(device: Communicator) { if (!state.value.active) mutableState.update { it.copy(pendingConnection = device) } }
+    fun requestConnection(device: Communicator) { if (!state.value.active && state.value.monitor.startedAt == null) mutableState.update { it.copy(pendingConnection = device) } }
     fun cancelConnectionPrompt() { mutableState.update { it.copy(pendingConnection = null) } }
     fun confirmConnection() {
         val selected = state.value.pendingConnection ?: return
@@ -112,10 +118,18 @@ class SessionController(private val app: Application, private val connectionFact
         mutableState.update { it.copy(active = true, notice = null) }
         event("Подтверждено подключение к $name ($address)")
         val sink = object : SessionSink {
+            private var configuration = ConfigurationSnapshot()
+            override fun configuration(snapshot: ConfigurationSnapshot) { configuration = snapshot }
             override fun begin(identity: DeviceIdentity, at: Instant) {
-                history.begin(identity, "$name ($address)", at); event("Сессия ${identity.uniqueKey} начата")
+                history.begin(identity, "$name ($address)", at, configuration); event("Сессия ${identity.uniqueKey} начата")
             }
-            override fun sample(batch: MeasurementBatch) = history.append(batch)
+            override fun sample(batch: MeasurementBatch) {
+                val previous = lastMeasurement
+                lastMeasurement = batch.receivedAt
+                history.append(batch)
+                if (previous != null && java.time.Duration.between(previous, batch.receivedAt).toMillis() > 10000)
+                    event("Измерение после перерыва ${java.time.Duration.between(previous, batch.receivedAt).toMillis()} мс; причина не определена автоматически")
+            }
             override fun event(at: Instant, text: String) { history.event(at, text); append(DiagnosticEntry(at, "SESSION", text)) }
             override fun gap(at: Instant, text: String) { history.event(at, text, gap = true); append(DiagnosticEntry(at, "SESSION", text)) }
         }
@@ -126,11 +140,19 @@ class SessionController(private val app: Application, private val connectionFact
             if (!bt.isEnabled) throw IOException("Bluetooth выключен")
             val device = bt.getRemoteDevice(address)
             if (device.bondState != BluetoothDevice.BOND_BONDED) throw IOException("Коммуникатор не сопряжён")
-            val transport = BluetoothSppTransport.connect(device)
+            socketState = "подключение"
+            val transport = BluetoothSppTransport.connect(device) { text ->
+                socketState = text
+                append(DiagnosticEntry(Instant.now(), "BLUETOOTH", text))
+            }
+            socketState = "RFCOMM открыт"
             val client = HartClient(transport, ::append, readAttempts = 1)
             object : MonitorConnection {
                 private lateinit var identity: DeviceIdentity
                 override suspend fun identify(): DeviceIdentity = client.identify().first.also { identity = it }
+                override val isOpen: Boolean get() = transport.isOpen
+                override fun resetSession() { reader = null; readerClient = null }
+                override suspend fun configuration() = readConfiguration(client, identity, ::event)
                 override suspend fun discover(): MeasurementBatch {
                     reader = MeasurementReader(client, identity, ::event)
                     readerClient = client
@@ -138,6 +160,7 @@ class SessionController(private val app: Application, private val connectionFact
                 }
                 override suspend fun sample(): MeasurementBatch {
                     // A replacement RFCOMM connection needs a reader bound to its new client.
+                    if (reader == null) reader = MeasurementReader(client, identity, ::event)
                     if (readerClient !== client) { reader!!.rebind(client); readerClient = client }
                     if (!reader!!.discovered) reader!!.discover()
                     return reader!!.sample()
@@ -147,11 +170,16 @@ class SessionController(private val app: Application, private val connectionFact
           }
         }, sink = sink)
         engine = newEngine
-        observer = scope.launch { newEngine.state.collect { monitor -> mutableState.update { it.copy(monitor = monitor) } } }
-        newEngine.start()
+        observer = scope.launch { newEngine.state.collect { monitor ->
+            val old = state.value.monitor
+            mutableState.update { it.copy(monitor = monitor) }
+            if (old.phase != monitor.phase) append(DiagnosticEntry(Instant.now(), "STATE", "${old.phase} → ${monitor.phase}: ${monitor.message}; socket=$socketState; lastTX=$lastTx; lastRX=$lastRx; lastMeasurement=$lastMeasurement"))
+        } }
+        newEngine.start(automaticSession = false)
     }
     // Tracks reader ownership, never shared concurrently: the engine is the sole connection owner.
     private var readerClient: HartClient? = null
+    fun beginSession() { scope.launch { archiveActions.withLock { engine?.startSession() ?: notice("Сначала подключите коммуникатор на вкладке «Связь»") } } }
     fun pause(value: Boolean) { scope.launch { engine?.pause(value) } }
     fun period(millis: Long) { engine?.setPeriod(millis) }
     fun save(finish: Boolean = false) {
@@ -174,16 +202,37 @@ class SessionController(private val app: Application, private val connectionFact
     fun end() { if (!state.value.saving) scope.launch { archiveActions.withLock { endNow() } } }
     private suspend fun endNow(reason: String = "Завершение пользователем") {
         event("Остановка сессии: $reason")
-        engine?.stop(reason); observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
+        engine?.finishSession()
         history.discard()
-        event("Сессия завершена; временная история удалена")
+        lastMeasurement = null
+        event("Сессия завершена; временная история удалена; Bluetooth сохранён, если доступен")
+        if (engine?.state?.value?.bluetoothConnected != true) disconnectNow()
+    }
+    fun disconnect() { scope.launch { archiveActions.withLock {
+        if (state.value.monitor.startedAt != null) { notice("Сначала сохраните или завершите сессию"); return@withLock }
+        disconnectNow()
+    } } }
+    private suspend fun disconnectNow() {
+        engine?.stop("Явное отключение / завершение службы"); observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
         app.stopService(Intent(app, MonitoringService::class.java))
         mutableState.update { it.copy(active = false, monitor = MonitorState()) }
     }
     fun serviceDestroyed(lease: Long) { scope.launch { archiveActions.withLock {
         if (lease != serviceLease) { serviceLifecycle("Устаревший onDestroy lease=$lease; текущий=$serviceLease; сессия сохранена"); return@withLock }
         serviceLifecycle("onDestroy; lease=$lease", false)
-        if (state.value.active) endNow("Foreground service уничтожена системой / stopService")
+        if (state.value.active) {
+            val previous = state.value.monitor
+            engine?.stop("Foreground service onDestroy; источник остановки Android не сообщает")
+            observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
+            mutableState.update { it.copy(active = false, monitor = previous.copy(phase = if (previous.startedAt != null) MonitorPhase.DECISION else MonitorPhase.ERROR,
+                bluetoothConnected = false, latest = null, recovery = null, message = "Служба остановлена. Временная история сохранена до вашего решения")) }
+        }
+    } } }
+    fun edit(id: String, title: String, comment: String) { scope.launch { archiveActions.withLock {
+        runCatching { history.edit(id, title, comment) }.onSuccess { refreshArchives() }.onFailure { notice("Ошибка изменения: ${it.message}") }
+    } } }
+    fun deleteMany(ids: Set<String>) { scope.launch { archiveActions.withLock {
+        runCatching { ids.forEach(history::delete) }.onSuccess { refreshArchives() }.onFailure { notice("Ошибка удаления: ${it.message}") }
     } } }
     fun refreshArchives() { scope.launch { try { val entries = history.list(); mutableState.update { it.copy(archives = entries) } } catch (e: Exception) { notice("Ошибка журнала: ${e.message}") } } }
     fun delete(id: String) { scope.launch { try { history.delete(id); refreshArchives() } catch (e: Exception) { notice("Ошибка удаления: ${e.message}") } } }

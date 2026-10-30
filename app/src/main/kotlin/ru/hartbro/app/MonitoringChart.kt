@@ -28,7 +28,7 @@ private val seriesColors = listOf(Color(0xFF1976D2), Color(0xFFD84315), Color(0x
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revision: Long, latest: MeasurementBatch? = null) {
+internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revision: Long, latest: MeasurementBatch? = null, configuredRange: String? = null) {
     var loaded by remember(archiveId) { mutableStateOf<HistoryWindow?>(null) }
     var error by remember(archiveId) { mutableStateOf<String?>(null) }
     var viewport by remember(archiveId) { mutableStateOf(if (archiveId == null) ChartViewport() else ChartViewport(Long.MAX_VALUE, following = false)) }
@@ -47,7 +47,10 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
             delay(250) // Bound UI reads; every received sample is still written by the engine.
         }
     }
-    Text("Общий график", style = MaterialTheme.typography.titleMedium)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Text("Общий график", style = MaterialTheme.typography.titleMedium)
+        Text(configuredRange ?: loaded?.view?.info?.configuration?.range?.label ?: "Диапазон неизвестен", style = MaterialTheme.typography.labelSmall)
+    }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     val model = loaded
     if (model == null) { Text("Измерений пока нет"); return }

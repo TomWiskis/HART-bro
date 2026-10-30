@@ -32,7 +32,7 @@ class MonitoringService : Service() {
             controller.serviceLifecycle("startForeground отклонён: ${e.message}")
             controller.notice("Android не разрешил фоновую службу: ${e.message}"); stopSelf(); return
         }
-        wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hartbro:monitor").apply { setReferenceCounted(false) }
+        wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hartbro:monitor").apply { setReferenceCounted(false); acquire(600_000) } // Protect initial connect immediately, including Activity going into background.
         scope.launch {
             // Diagnostics no longer cause dozens of synchronous notification updates per reply.
             controller.state.map { state ->
@@ -55,7 +55,7 @@ class MonitoringService : Service() {
             var renewed = 0L
             while (isActive) {
                 val state = controller.state.value
-                val working = state.active && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
+                val working = state.active && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
                 if (working && (wakeLock?.isHeld != true || SystemClock.elapsedRealtime() - renewed >= 300_000)) {
                     wakeLock?.acquire(600_000); renewed = SystemClock.elapsedRealtime()
                 } else if (!working && wakeLock?.isHeld == true) wakeLock?.release()

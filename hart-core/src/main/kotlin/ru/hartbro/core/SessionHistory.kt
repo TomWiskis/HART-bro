@@ -3,15 +3,19 @@ package ru.hartbro.core
 import java.io.*
 import java.time.Instant
 import java.util.UUID
+import java.util.Properties
 
 class HistoryLimitException : IOException("Достигнут предел временной истории (64 МиБ). Сохраните или завершите сессию.")
 data class SessionInfo(val id: String, val startedAt: Long, val communicator: String, val deviceKey: String,
-                       val manufacturer: String, val identityHex: String)
+                       val manufacturer: String, val identityHex: String,
+                       val configuration: ConfigurationSnapshot = ConfigurationSnapshot(), val title: String = "", val comment: String = "", val endedAt: Long = startedAt) {
+    val durationMillis: Long get() = (endedAt - startedAt).coerceAtLeast(0)
+}
 data class ChartPoint(val time: Long, val measurement: Measurement, val segment: Long)
 data class HistoryView(val info: SessionInfo, val end: Long, val points: List<ChartPoint>, val events: List<Pair<Long, String>>,
                        val lastMeasurementAt: Long = end)
 
-/** v1 remains readable. Record 2 is legacy; 4 marks a real gap, 5 an informational event. */
+/** Version 2 adds source-preserving configuration; v1 remains readable. Record 2 is legacy; 4 marks a real gap, 5 an informational event. */
 class SessionHistory(private val working: File, private val archives: File, private val maxBytes: Long = 64L * 1024 * 1024) {
     private var active: File? = null
     private val indexes = linkedMapOf<File, Index>()
@@ -19,12 +23,11 @@ class SessionHistory(private val working: File, private val archives: File, priv
         private set
     init { working.mkdirs(); archives.mkdirs() }
     @Synchronized fun cleanOrphans() { working.listFiles()?.filter { it.extension == "tmp" }?.forEach { it.delete() } }
-    @Synchronized fun begin(identity: DeviceIdentity, communicator: String, at: Instant) {
+    @Synchronized fun begin(identity: DeviceIdentity, communicator: String, at: Instant, configuration: ConfigurationSnapshot = ConfigurationSnapshot()) {
         check(active == null)
         val id = UUID.randomUUID().toString(); val file = File(working, "$id.tmp")
         DataOutputStream(BufferedOutputStream(FileOutputStream(file))).use { out ->
-            out.writeInt(MAGIC); out.writeInt(1); out.writeUTF(id); out.writeLong(at.toEpochMilli())
-            out.writeUTF(communicator); out.writeUTF(identity.uniqueKey); out.writeUTF(identity.manufacturerDescription); out.writeUTF(identity.raw.hex())
+            writeHeader(out, SessionInfo(id, at.toEpochMilli(), communicator, identity.uniqueKey, identity.manufacturerDescription, identity.raw.hex(), configuration))
         }
         active = file
     }
@@ -56,7 +59,13 @@ class SessionHistory(private val working: File, private val archives: File, priv
         val file = active ?: error("Сначала начните сессию"); val id = UUID.randomUUID().toString()
         val staging = File(archives, "$id.partial")
         try {
-            FileInputStream(file).use { input -> FileOutputStream(staging).use { input.copyTo(it); it.fd.sync() } }
+            DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
+                val info = readHeader(input)
+                FileOutputStream(staging).use { stream ->
+                    val out = DataOutputStream(BufferedOutputStream(stream))
+                    writeHeader(out, info.copy(id = id)); input.copyTo(out); out.flush(); stream.fd.sync()
+                }
+            }
             FileOutputStream(staging, true).use { fileOutput ->
                 val output = DataOutputStream(fileOutput)
                 output.writeInt(9); output.writeByte(3); output.writeLong(at.toEpochMilli()); output.flush(); fileOutput.fd.sync()
@@ -66,10 +75,56 @@ class SessionHistory(private val working: File, private val archives: File, priv
         return id
     }
     @Synchronized fun discard() { active?.let { indexes.remove(it); check(!it.exists() || it.delete()) }; active = null }
-    @Synchronized fun list(): List<Pair<String, SessionInfo>> = archives.listFiles()?.filter { it.extension == "hart" }?.map {
-        it.nameWithoutExtension to DataInputStream(BufferedInputStream(FileInputStream(it))).use(::readHeader)
+    fun list(): List<Pair<String, SessionInfo>> = archives.listFiles()?.filter { it.extension == "hart" }?.map {
+        it.nameWithoutExtension to info(it.nameWithoutExtension)
     }?.sortedByDescending { it.second.startedAt } ?: emptyList()
-    @Synchronized fun delete(id: String) { val f = archive(id); indexes.remove(f); check(!f.exists() || f.delete()) }
+    fun info(id: String): SessionInfo {
+        val file = archive(id)
+        val header = DataInputStream(BufferedInputStream(FileInputStream(file))).use(::readHeader)
+        val end = RandomAccessFile(file, "r").use { input ->
+            if (input.length() >= 13) { input.seek(input.length() - 13); if (input.readInt() == 9 && input.readUnsignedByte() == 3) input.readLong() else header.startedAt } else header.startedAt
+        }
+        val meta = Properties(); File(archives, "$id.meta").takeIf { it.exists() }?.inputStream()?.use(meta::load)
+        return header.copy(id = id, title = meta.getProperty("title", ""), comment = meta.getProperty("comment", ""), endedAt = end)
+    }
+    @Synchronized fun edit(id: String, title: String, comment: String) {
+        require(title.length <= 200 && comment.length <= 10000) { "Название: до 200, комментарий: до 10000 символов" }
+        require(archive(id).isFile)
+        val staging = File(archives, "$id.meta.partial")
+        try {
+            val meta = Properties().apply { setProperty("title", title); setProperty("comment", comment) }
+            FileOutputStream(staging).use { meta.store(it, "HART-bro user metadata v1"); it.fd.sync() }
+            check(staging.renameTo(File(archives, "$id.meta"))) { "Не удалось сохранить название и комментарий" }
+        } finally { staging.delete() }
+    }
+    @Synchronized fun delete(id: String) { val f = archive(id); indexes.remove(f); check(!f.exists() || f.delete()); File(archives, "$id.meta").delete() }
+
+    /** Stream immutable saved records, including bad/absent values. No chart downsampling, no live-history lock. */
+    fun records(id: String, sample: (MeasurementBatch) -> Unit, event: (Long, String, Boolean) -> Unit = { _, _, _ -> }) {
+        RandomAccessFile(archive(id), "r").use { input ->
+            readHeader(input)
+            while (input.filePointer < input.length()) readRecord(input) { type, data ->
+                val time = data.readLong()
+                when (type) {
+                    1 -> sample(readBatch(data, time))
+                    2, 4, 5 -> { val text = data.readUTF(); event(time, text, type == 4 || type == 2 && legacyGap(text)) }
+                    3 -> Unit
+                    else -> error("Неизвестная запись истории $type")
+                }
+            }
+        }
+    }
+    private fun readBatch(data: DataInputStream, time: Long): MeasurementBatch {
+        val status = data.readInt(); val loop = data.readFloat().takeIf { it.isFinite() }; val extended = data.readInt().takeIf { it >= 0 }
+        val ticks = data.readLong().takeIf { it >= 0 }; val loopTime = data.readLong().takeIf { it >= 0 }?.let(Instant::ofEpochMilli)
+        val count = data.readInt(); require(count in 1..4)
+        val values = List(count) {
+            val slot = data.readUTF(); require(slot in MeasurementDecoder.slots)
+            Measurement(slot, data.readFloat(), data.readInt(), Quality.entries[data.readInt()], Instant.ofEpochMilli(data.readLong()),
+                data.readInt(), data.readInt().takeIf { it >= 0 }, data.readInt().takeIf { it >= 0 }, data.readInt().takeIf { it >= 0 })
+        }
+        return MeasurementBatch(values, status, Instant.ofEpochMilli(time), loop, extended, ticks, loopTime)
+    }
     private fun archive(id: String): File {
         require(id.matches(Regex("[a-f0-9-]{36}"))); return File(archives, "$id.hart")
     }
@@ -139,6 +194,7 @@ class SessionHistory(private val working: File, private val archives: File, priv
         }
         return HistoryView(index.info, index.cursor.end, bins.values.flatMap { it.filterNotNull().flatten() }.sortedBy { it.time }, events.toList(), index.cursor.lastMeasurement)
     }
+    fun savedView(id: String, buckets: Int = 300): HistoryView = SessionHistory(working, archives).view(id, buckets = buckets)!!
     @Synchronized fun bounds(id: String? = null): Pair<Long, Long>? {
         val file = if (id == null) active ?: return null else archive(id)
         val i = index(file)
@@ -158,13 +214,10 @@ class SessionHistory(private val working: File, private val archives: File, priv
             event(time, text)
         } else if (type == 1) {
             cursor.lastMeasurement = maxOf(cursor.lastMeasurement, time)
-            data.readInt(); data.readFloat(); data.readInt(); data.readLong(); data.readLong()
-            val count = data.readInt(); require(count in 1..4)
+            val batch = readBatch(data, time)
             val present = mutableSetOf<String>()
-            repeat(count) {
-                val slot = data.readUTF(); require(slot in MeasurementDecoder.slots); present += slot
-                val v = Measurement(slot, data.readFloat(), data.readInt(), Quality.entries[data.readInt()], Instant.ofEpochMilli(data.readLong()),
-                    data.readInt(), data.readInt().takeIf { it >= 0 }, data.readInt().takeIf { it >= 0 }, data.readInt().takeIf { it >= 0 })
+            batch.values.forEach { v ->
+                val slot = v.slot; present += slot
                 if (!v.plottable || cursor.units[slot]?.let { it != v.unitCode } == true) cursor.segments[slot] = (cursor.segments[slot] ?: 0) + 1
                 cursor.units[slot] = v.unitCode
                 if (v.plottable) point(ChartPoint(time, v, cursor.gap * 1_000_000_000 + (cursor.segments[slot] ?: 0)))
@@ -175,8 +228,15 @@ class SessionHistory(private val working: File, private val archives: File, priv
     }
     private fun legacyGap(text: String) = text == "Пауза" || listOf("Ошибка обмена", "Связь потеряна", "Остановка:", "Первоначальное чтение").any(text::startsWith)
     private fun readHeader(input: DataInput): SessionInfo {
-        require(input.readInt() == MAGIC && input.readInt() == 1) { "Неизвестный формат архива" }
-        return SessionInfo(input.readUTF(), input.readLong(), input.readUTF(), input.readUTF(), input.readUTF(), input.readUTF())
+        require(input.readInt() == MAGIC) { "Неизвестный формат архива" }
+        val version = input.readInt(); require(version in 1..2) { "Неизвестная версия архива $version" }
+        val base = SessionInfo(input.readUTF(), input.readLong(), input.readUTF(), input.readUTF(), input.readUTF(), input.readUTF())
+        return if (version == 2) base.copy(configuration = ConfigurationSnapshot.read(input)) else base
+    }
+    private fun writeHeader(out: DataOutput, info: SessionInfo) {
+        out.writeInt(MAGIC); out.writeInt(2); out.writeUTF(info.id); out.writeLong(info.startedAt)
+        out.writeUTF(info.communicator); out.writeUTF(info.deviceKey); out.writeUTF(info.manufacturer); out.writeUTF(info.identityHex)
+        info.configuration.write(out)
     }
     private fun readRecord(input: RandomAccessFile, consume: (Int, DataInputStream) -> Unit) {
         val length = input.readInt(); require(length in 1..4096) { "Повреждённая запись истории" }
