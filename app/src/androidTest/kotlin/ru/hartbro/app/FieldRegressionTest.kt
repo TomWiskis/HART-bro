@@ -146,6 +146,7 @@ class FieldRegressionTest {
             ui.waitUntil(15000) { ui.onAllNodesWithText("Открыть").fetchSemanticsNodes().size >= 2 }
             ui.onAllNodesWithText("Открыть")[0].performScrollTo().performClick()
             ui.onNodeWithTag("archiveScroll").performTouchInput { repeat(4) { swipeUp() } }
+            ui.onNodeWithTag("endSession").assertIsDisplayed()
             ui.onNodeWithTag("archiveBack").assertIsDisplayed().performClick()
             ui.onAllNodesWithText("Открыть")[1].performScrollTo().performClick()
             ui.onNodeWithTag("archiveScroll").performTouchInput { swipeUp() }; device.pressBack()
@@ -157,7 +158,7 @@ class FieldRegressionTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             connect(scenario); val connections = app.connections.get()
             ui.onNodeWithText("Монитор", useUnmergedTree = true).performClick()
-            ui.onNodeWithTag("startSession").performScrollTo().performClick()
+            ui.onNodeWithTag("startSession").assertIsDisplayed().performClick()
             waitFor { app.controller.state.value.monitor.latest != null }
             app.controller.pause(true); waitFor { app.controller.state.value.monitor.phase == MonitorPhase.PAUSED }
             val end = app.controller.history.bounds()!!.second; SystemClock.sleep(2200)

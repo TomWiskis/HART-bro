@@ -144,7 +144,20 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
     val monitor = state.monitor
     val decision = monitor.startedAt != null && monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE)
     Scaffold(topBar = { TopAppBar(title = { Text("HART-бро ${BuildConfig.VERSION_NAME}") },
-        navigationIcon = { if (tab == 2 && archiveId != null) TextButton(onClick = { archiveId = null }, modifier = Modifier.testTag("archiveBack")) { Text("К списку") } }) }) { padding ->
+        navigationIcon = { if (tab == 2 && archiveId != null) TextButton(onClick = { archiveId = null }, modifier = Modifier.testTag("archiveBack")) { Text("К списку") } }) },
+        bottomBar = {
+            if (monitor.startedAt != null || tab == 1) Surface(tonalElevation = 3.dp) {
+                FlowRow(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (monitor.startedAt == null) {
+                        Button(onClick = c::beginSession, enabled = monitor.phase == MonitorPhase.READY, modifier = Modifier.testTag("startSession")) { Text("Начать сессию") }
+                    } else {
+                        if (monitor.phase in setOf(MonitorPhase.MONITORING, MonitorPhase.PAUSED)) Button(onClick = { c.pause(monitor.phase != MonitorPhase.PAUSED) }) { Text(if (monitor.phase == MonitorPhase.PAUSED) "Продолжить" else "Приостановить") }
+                        Button(onClick = { c.save() }, enabled = !state.saving) { Text(if (state.saving) "Сохранение…" else "Сохранить сессию") }
+                        OutlinedButton(onClick = { endPrompt = true }, enabled = !state.saving, modifier = Modifier.testTag("endSession")) { Text("Завершить…") }
+                    }
+                }
+            }
+        }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                 listOf("Связь", "Монитор", "Журнал", "HEX").forEachIndexed { i, text -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(text, maxLines = 1) }) }
@@ -183,8 +196,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                     1 -> {
                         Text("Bluetooth: ${if (monitor.bluetoothConnected) "подключён" else "нет связи"}")
                         if (monitor.startedAt == null) {
-                            Button(onClick = c::beginSession, enabled = monitor.phase == MonitorPhase.READY, modifier = Modifier.testTag("startSession")) { Text("Начать сессию") }
-                            if (!state.active) TextButton(onClick = { tab = 0 }) { Text("Перейти к подключению") }
+                            if (!monitor.bluetoothConnected) TextButton(onClick = { tab = 0 }) { Text("Перейти к подключению") }
                         }
                         TextButton(onClick = { technical = !technical }) { Text(if (technical) "Скрыть сведения" else "Сведения о приборе и справка") }
                         monitor.identity?.let { d ->
@@ -214,9 +226,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(1L, 2L, 5L, 10L).forEach { sec -> FilterChip(selected = monitor.periodMillis == sec * 1000, onClick = { c.period(sec * 1000) }, label = { Text("$sec с") }) }
                         }
-                        if (monitor.phase in setOf(MonitorPhase.MONITORING, MonitorPhase.PAUSED)) Button(onClick = { c.pause(monitor.phase != MonitorPhase.PAUSED) }) { Text(if (monitor.phase == MonitorPhase.PAUSED) "Продолжить" else "Приостановить") }
                         if (monitor.startedAt != null) {
-                            Button(onClick = { c.save() }, enabled = !state.saving) { Text(if (state.saving) "Сохранение…" else "Сохранить сессию") }
                             key(monitor.startedAt) { MonitoringChart(c.history, null, monitor.revision, latest, monitor.configuration.range?.label ?: "Диапазон неизвестен") }
                         }
                         TextButton(onClick = { tab = 3 }) { Text("Открыть диагностику") }
@@ -238,7 +248,6 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         } }
                     }
                 }
-                if (monitor.startedAt != null) OutlinedButton(onClick = { endPrompt = true }, enabled = !state.saving) { Text("Завершить сессию…") }
             }
         }
     }

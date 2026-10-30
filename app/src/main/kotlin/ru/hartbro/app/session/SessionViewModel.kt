@@ -110,7 +110,11 @@ class SessionController(private val app: Application, private val connectionFact
         cancelConnectionPrompt()
         try {
             app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", selected.address).putExtra("name", selected.name))
-        } catch (e: Exception) { notice("Не удалось запустить мониторинг: ${e.message}") }
+        } catch (e: Exception) {
+            val message = "Не удалось запустить подключение: ${e.javaClass.simpleName}: ${e.message}"
+            append(DiagnosticEntry(Instant.now(), "SERVICE", "startForegroundService отклонён: $message"))
+            mutableState.update { it.copy(notice = message, monitor = MonitorState(phase = MonitorPhase.ERROR, message = message)) }
+        }
     }
     @Synchronized @SuppressLint("MissingPermission")
     fun start(address: String, name: String) {
@@ -222,11 +226,11 @@ class SessionController(private val app: Application, private val connectionFact
         if (lease != serviceLease) { serviceLifecycle("Устаревший onDestroy lease=$lease; текущий=$serviceLease; сессия сохранена"); return@withLock }
         serviceLifecycle("onDestroy; lease=$lease", false)
         if (state.value.active) {
-            val previous = state.value.monitor
             engine?.stop("Foreground service onDestroy; источник остановки Android не сообщает")
+            val previous = engine?.state?.value ?: state.value.monitor
             observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
             mutableState.update { it.copy(active = false, monitor = previous.copy(phase = if (previous.startedAt != null) MonitorPhase.DECISION else MonitorPhase.ERROR,
-                bluetoothConnected = false, latest = null, recovery = null, message = "Служба остановлена. Временная история сохранена до вашего решения")) }
+                bluetoothConnected = false, latest = null, recovery = null, message = if (previous.startedAt != null) "Служба остановлена. Временная история сохранена до вашего решения" else "Служба остановлена. Подключите коммуникатор повторно")) }
         }
     } } }
     fun edit(id: String, title: String, comment: String) { scope.launch { archiveActions.withLock {
