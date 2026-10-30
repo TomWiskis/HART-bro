@@ -4,12 +4,16 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.*
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import ru.hartbro.app.HartApplication
 import ru.hartbro.app.MainActivity
 import ru.hartbro.core.MonitorPhase
 
-/** Started only by the visible activity after connection consent. Never restarts a killed session. */
+/** Visible, user-started owner; Activity visibility never ends the session. No restart after process death. */
 class MonitoringService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val controller get() = (application as HartApplication).controller
@@ -18,44 +22,68 @@ class MonitoringService : Service() {
     override fun onBind(intent: Intent?) = null
     override fun onCreate() {
         super.onCreate()
+        controller.serviceLifecycle("onCreate", true)
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("monitor", "HART-мониторинг", NotificationManager.IMPORTANCE_LOW))
-        val notification = notification("Подключение к прибору…")
         try {
-            startForeground(20, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            startForeground(20, notification("Подключение к прибору…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
             ready = true
         } catch (e: RuntimeException) {
-            controller.notice("Android не разрешил фоновую службу: ${e.message}")
-            stopSelf()
-            return
+            controller.serviceLifecycle("startForeground отклонён: ${e.message}")
+            controller.notice("Android не разрешил фоновую службу: ${e.message}"); stopSelf(); return
         }
         wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hartbro:monitor").apply { setReferenceCounted(false) }
         scope.launch {
-            controller.state.collect { state ->
-                val needsDecision = state.monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
-                if (needsDecision && wakeLock?.isHeld == true) wakeLock?.release()
-                getSystemService(NotificationManager::class.java).notify(20, notification(if (needsDecision) "Требуется решение: ${state.monitor.message}" else state.monitor.message))
+            // Diagnostics no longer cause dozens of synchronous notification updates per reply.
+            controller.state.map { state ->
+                val m = state.monitor
+                val recovery = m.recovery
+                val latest = m.latest
+                when {
+                    recovery != null -> "Восстановление: осталось ${((recovery.remainingMillis + 999) / 1000)} с; попытка ${recovery.attempt}. ${recovery.lastAttempt}"
+                    m.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR) -> "Требуется решение: ${m.message}"
+                    latest != null -> "${m.message} · ${DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault()).format(latest.receivedAt)}"
+                    else -> m.message
+                }
+            }.distinctUntilChanged().collect { text ->
+                runCatching { getSystemService(NotificationManager::class.java).notify(20, notification(text)) }
+                    .onFailure { controller.serviceLifecycle("Ошибка уведомления: ${it.message}") }
+                delay(1000)
             }
         }
         scope.launch {
+            var renewed = 0L
             while (isActive) {
-                if (controller.state.value.monitor.phase !in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)) wakeLock?.acquire(10 * 60 * 1000L)
-                delay(5 * 60 * 1000L)
+                val state = controller.state.value
+                val working = state.active && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
+                if (working && (wakeLock?.isHeld != true || SystemClock.elapsedRealtime() - renewed >= 300_000)) {
+                    wakeLock?.acquire(600_000); renewed = SystemClock.elapsedRealtime()
+                } else if (!working && wakeLock?.isHeld == true) wakeLock?.release()
+                delay(1000)
             }
         }
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val address = intent?.getStringExtra("address")
-        if (!ready || address == null) { stopSelf(); return START_NOT_STICKY }
-        controller.start(address, intent.getStringExtra("name") ?: "VIATOR")
+        controller.serviceLifecycle("onStartCommand id=$startId; active=${controller.state.value.active}; hasAddress=${address != null}")
+        if (!ready) { stopSelf(); return START_NOT_STICKY }
+        if (address != null) controller.start(address, intent.getStringExtra("name") ?: "VIATOR")
+        else if (!controller.state.value.active) stopSelf() // An empty delivery must not stop an already active session.
         return START_NOT_STICKY
     }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        controller.serviceLifecycle("onTaskRemoved; активная сессия продолжает работу")
+        super.onTaskRemoved(rootIntent)
+    }
     private fun notification(text: String): Notification {
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val open = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, "monitor").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("HART-бро · мониторинг").setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
-            .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).addAction(Notification.Action.Builder(null, "Открыть сессию", open).build()).build()
+            .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
+            .addAction(Notification.Action.Builder(null, "Открыть сессию", open).build()).build()
     }
     override fun onDestroy() {
+        controller.serviceLifecycle("onDestroy: foreground service остановлена", false)
         scope.cancel(); if (wakeLock?.isHeld == true) wakeLock?.release()
         controller.serviceDestroyed(); super.onDestroy()
     }

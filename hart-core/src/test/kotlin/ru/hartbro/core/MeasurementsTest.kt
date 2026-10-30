@@ -13,7 +13,7 @@ internal val metran02 = DeviceIdentity.parse(hex("FE 99 72 05 07 07 28 08 00 5F 
 internal fun sample02(at: Long = 0, value: Float = 1f, quality: Quality = Quality.GOOD) = MeasurementBatch(
     listOf(Measurement("PV", value, 12, quality, Instant.ofEpochMilli(at), 9)), 0, Instant.ofEpochMilli(at))
 
-private class ReadFixture(private val responses: Map<Int, ByteArray>, private val responseCodes: Map<Int,Int> = emptyMap()) : HartTransport {
+private class ReadFixture(private val responses: Map<Int, ByteArray>, private val responseCodes: Map<Int,Int> = emptyMap(), private val silent: Set<Int> = emptySet(), private val corrupt: Set<Int> = emptySet()) : HartTransport {
     val commands = mutableListOf<Int>()
     val requests = mutableListOf<ByteArray>()
     private val input = Channel<ByteArray>(Channel.UNLIMITED)
@@ -21,11 +21,13 @@ private class ReadFixture(private val responses: Map<Int, ByteArray>, private va
         requests += bytes
         val request = (HartDecoder().accept(bytes).single() as DecodeEvent.Frame).value
         commands += request.command
+        if (request.command in silent) return
         val data = responses[request.command]
         val code = responseCodes[request.command] ?: if (data == null) 64 else 0
         val payload = if (code != 0) byteArrayOf(code.toByte(), 0) else byteArrayOf(0, 0) + data!!
         val body = byteArrayOf(0x86.toByte()) + request.address + byteArrayOf(request.command.toByte(), payload.size.toByte()) + payload
         val frame = ByteArray(4) { 0xFF.toByte() } + body + HartCodec.checksum(body)
+        if (request.command in corrupt) frame[frame.lastIndex] = (frame.last().toInt() xor 1).toByte()
         // Actual transport often returns one-to-four-byte fragments.
         frame.toList().chunked(3).forEach { input.send(it.toByteArray()) }
     }
@@ -143,5 +145,24 @@ class MeasurementsTest {
         assertThrows(IllegalArgumentException::class.java){MeasurementDecoder.withStatus(reply("00 F6 41 0C 3F 80 00 00 C0"),listOf(246),7)}
         val b=MeasurementDecoder.withStatus(reply("00 F6 41 0C 3F 80 00 00 C0 F7 40 20 7F A0 00 00 00 00 00 00 00"),listOf(246,247),7)
         assertTrue(b.values[0].plottable);assertFalse(b.values[1].plottable)
+    }
+
+    @Test fun twoCommand9TimeoutsUseWorkingCommand3ForOnlyThisSession() = runTest {
+        val data=mapOf(1 to hex("0C 3F 80 00 00"),3 to hex("40 80 00 00 0C 3F 80 00 00"))
+        val t=ReadFixture(data,silent=setOf(9));val reports=mutableListOf<String>()
+        val reader=MeasurementReader(HartClient(t,timeoutMillis=50,readAttempts=1),metran02,reports::add);reader.discover()
+        try{reader.sample();fail()}catch(e:HartTimeoutException){assertFalse(e.malformedFrames)}
+        repeat(4){assertEquals(3,reader.sample().values.single().command)}
+        assertEquals(2,t.commands.count{it==9});assertTrue(reports.any{it.contains("таймаута")&&it.contains("Это не ответ")})
+        val another=MeasurementReader(HartClient(t,timeoutMillis=50,readAttempts=1),metran02);another.discover()
+        try{another.sample();fail()}catch(_:HartTimeoutException){}
+        assertEquals(3,t.commands.count{it==9})
+    }
+    @Test fun corruptRepliesAreNotClassifiedAsPureTimeoutsOrUnsupportedCommands() = runTest {
+        val records=(246..249).map{byteArrayOf(it.toByte(),0x41,12,0x3f,0x80.toByte(),0,0,0xc0.toByte())}.fold(byteArrayOf()){a,b->a+b}
+        val t=ReadFixture(mapOf(1 to hex("0C 3F 80 00 00"),9 to (byteArrayOf(0)+records+ByteArray(4))),corrupt=setOf(9))
+        val reader=MeasurementReader(HartClient(t,timeoutMillis=50,readAttempts=1),metran02);reader.discover()
+        repeat(3){try{reader.sample();fail()}catch(e:HartTimeoutException){assertTrue(e.malformedFrames)}}
+        assertEquals(3,t.commands.count{it==9})
     }
 }

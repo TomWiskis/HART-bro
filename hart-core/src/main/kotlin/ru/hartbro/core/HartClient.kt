@@ -18,7 +18,7 @@ data class DiagnosticEntry(val time: Instant, val kind: String, val message: Str
     fun text(): String = "$time [$kind] $message" + if (bytes.isNotEmpty()) "\n${bytes.hex()}" else ""
 }
 
-class HartTimeoutException(message: String) : Exception(message)
+class HartTimeoutException(message: String, val malformedFrames: Boolean = false) : Exception(message)
 
 /** A single serialized request queue per connection. There is deliberately no write-command API. */
 class HartClient(
@@ -46,6 +46,7 @@ class HartClient(
     }
 
     suspend fun read(address: HartAddress, command: ReadCommand, data: ByteArray = byteArrayOf()): HartReply = mutex.withLock {
+        var malformedFrames = false
         for (attempt in 1..readAttempts) {
             transport.discardBufferedInput().forEach { log("STALE", "Накопленные данные до отправки запроса; не считаются его ответом", it) }
             val decoder = HartDecoder()
@@ -61,7 +62,7 @@ class HartClient(
                         log("RX-CHUNK", "Фрагмент Bluetooth: ${bytes.size} байт", bytes)
                         for (event in decoder.accept(bytes)) {
                             when (event) {
-                                is DecodeEvent.Rejected -> log("FRAME", event.reason, event.raw)
+                                is DecodeEvent.Rejected -> { malformedFrames = true; log("FRAME", event.reason, event.raw) }
                                 is DecodeEvent.Frame -> {
                                     val frame = event.value
                                     log("RX-FRAME", "Полный кадр: разделитель 0x%02X, команда %d, преамбула %d FF, адрес %s, расширение %d байт"
@@ -87,11 +88,11 @@ class HartClient(
             } catch (timeout: TimeoutCancellationException) {
                 // Do not swallow cancellation of the caller's enclosing timeout.
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                if (decoder.hasPartialFrame) log("FRAME", "Неполный кадр к окончанию таймаута", decoder.reset())
+                if (decoder.hasPartialFrame) { malformedFrames = true; log("FRAME", "Неполный кадр к окончанию таймаута", decoder.reset()) }
                 log("TIMEOUT", "Нет корректного ответа на команду ${command.number} за $timeoutMillis мс")
             }
         }
-        throw HartTimeoutException("HART-ответ отсутствует: команда ${command.number}. Проверьте питание петли, нагрузку, адрес 0 и совместимость VIATOR.")
+        throw HartTimeoutException("HART-ответ отсутствует: команда ${command.number}. Проверьте питание петли, нагрузку, адрес 0 и совместимость VIATOR.", malformedFrames)
     }
 
     private fun log(kind: String, message: String, bytes: ByteArray = byteArrayOf()) {

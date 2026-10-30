@@ -23,7 +23,7 @@ class SessionHistoryTest {
         h.begin(metran02.copy(deviceId=1),"VIATOR",Instant.EPOCH);h.append(sample02(1));h.discard();assertEquals(1,h.list().size)
     }
     @Test fun gapsQualityAndUnitChangesRemainDistinctSegmentsAfterReopening() = withHistory { h,_ ->
-        h.begin(metran02,"VIATOR",Instant.EPOCH);h.append(sample02(1));h.event(Instant.ofEpochMilli(2),"Пауза")
+        h.begin(metran02,"VIATOR",Instant.EPOCH);h.append(sample02(1));h.event(Instant.ofEpochMilli(2),"Пауза",gap=true)
         h.append(sample02(3));h.append(sample02(4,quality=Quality.BAD));h.append(sample02(5))
         h.append(sample02(6).let{it.copy(values=it.values.map{v->v.copy(unitCode=32)})})
         val id=h.snapshot();h.discard();val view=h.view(id)!!
@@ -61,8 +61,41 @@ class SessionHistoryTest {
     }
 
     @Test fun snapshotBoundaryIncludesAnOpenPauseUntilTheActualSaveTime() = withHistory { h,_ ->
-        h.begin(metran02,"V",Instant.EPOCH);h.append(sample02(1000));h.event(Instant.ofEpochMilli(2000),"Пауза")
+        h.begin(metran02,"V",Instant.EPOCH);h.append(sample02(1000));h.event(Instant.ofEpochMilli(2000),"Пауза",gap=true)
         val id=h.snapshot(Instant.ofEpochMilli(15000));val view=h.view(id)!!
         assertEquals(15000L,view.end);assertEquals(1,view.points.size);assertEquals("Пауза",view.events.single().second)
+    }
+
+    @Test fun informationalEventsAndSnapshotsDoNotIntroduceFalseGaps() = withHistory { h,_ ->
+        h.begin(metran02,"V",Instant.EPOCH);h.append(sample02(1))
+        h.event(Instant.ofEpochMilli(2),"Activity в фоне");h.event(Instant.ofEpochMilli(3),"Снимок сохранён: id")
+        h.append(sample02(4));assertEquals(1,h.view()!!.points.map{it.segment}.distinct().size)
+    }
+    @Test fun liveUpdatesUseIncrementalIndexAndOnlyTheRequestedTail() = withHistory { h,_ ->
+        h.begin(metran02,"V",Instant.EPOCH);repeat(5000){h.append(sample02(it.toLong()))}
+        h.view(from=4900);val before=h.decodedRecords
+        h.append(sample02(5000));val view=h.view(from=4900)!!
+        assertTrue(h.decodedRecords-before<300);assertEquals(5000L,view.lastMeasurementAt)
+        assertEquals(101,view.points.size)
+    }
+    @Test fun windowDomainIgnoresInformationalWallTimeAndAgreesWithVisiblePoints() = withHistory { h,_ ->
+        h.begin(metran02,"V",Instant.EPOCH);h.append(sample02(1000));h.event(Instant.ofEpochMilli(100000),"Диагностика")
+        val window=h.window(null,ChartViewport())!!;assertEquals(1000L,window.range.last)
+        assertTrue(window.view.points.all{it.time in window.range})
+    }
+    @Test fun readsLegacyVersion1EventsAndMeasurementsWithoutModifyingArchives() = withHistory { h,root ->
+        val name="00000000-0000-0000-0000-000000000001"
+        val file=File(root,"archive/$name.hart")
+        java.io.DataOutputStream(file.outputStream()).use { out ->
+            out.writeInt(0x48425232);out.writeInt(1);out.writeUTF("old-session");out.writeLong(0)
+            listOf("VIATOR","9972-5FCA7F","Метран","FE 99").forEach(out::writeUTF)
+            fun event(at:Long,text:String){
+                val buffer=java.io.ByteArrayOutputStream();java.io.DataOutputStream(buffer).use{it.writeLong(at);it.writeUTF(text)}
+                out.writeInt(buffer.size()+1);out.writeByte(2);out.write(buffer.toByteArray())
+            }
+            event(1,"Пауза");event(2,"Связь восстановлена; идентификатор проверен")
+        }
+        val before=file.readBytes();val view=h.view(name)!!
+        assertEquals("old-session",view.info.id);assertEquals(2,view.events.size);assertArrayEquals(before,file.readBytes())
     }
 }

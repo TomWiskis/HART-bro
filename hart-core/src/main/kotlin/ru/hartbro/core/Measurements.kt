@@ -77,6 +77,7 @@ class MeasurementReader(private var client: HartClient, private val identity: De
     private var assignments: List<Int>? = null
     private var classifications: List<Int>? = null
     private var codes: List<Int>? = null
+    private val timeouts = mutableMapOf<ReadCommand, Int>()
     private var lastLoopCurrent: Pair<Float, Instant>? = null
     var discovered: Boolean = false
         private set
@@ -105,7 +106,7 @@ class MeasurementReader(private var client: HartClient, private val identity: De
         try { use(client.read(identity.address, command)) }
         catch (e: CancellationException) { throw e }
         catch (e: HartResponseException) { disabled += command; report("Команда ${command.number}: ${e.message}") }
-        catch (e: HartTimeoutException) { disabled += command; report("Команда ${command.number}: ${e.message}") }
+        catch (e: HartTimeoutException) { report("Команда ${command.number}: первоначальное чтение не выполнено (${e.message}); поддержка не определена") }
         catch (e: IllegalArgumentException) { disabled += command; report("Команда ${command.number}: ${e.message}") }
     }
     suspend fun sample(): MeasurementBatch {
@@ -114,23 +115,40 @@ class MeasurementReader(private var client: HartClient, private val identity: De
             try {
                 val batch = MeasurementDecoder.withStatus(client.read(identity.address, ReadCommand.VARIABLES_WITH_STATUS,
                     requested.map { it.toByte() }.toByteArray()), requested, identity.hartRevision)
+                timeouts.remove(ReadCommand.VARIABLES_WITH_STATUS)
                 return batch.copy(loopCurrent = lastLoopCurrent?.first, loopCurrentAt = lastLoopCurrent?.second)
             } catch (e: HartResponseException) {
+                timeouts.remove(ReadCommand.VARIABLES_WITH_STATUS)
                 if (e.responseCode !in setOf(2, 64)) throw e
                 disabled += ReadCommand.VARIABLES_WITH_STATUS
                 report("Команда 9 отключена для сессии: ${e.message}; переход к 3")
+            } catch (e: HartTimeoutException) {
+                if (!fallbackAfterTimeout(ReadCommand.VARIABLES_WITH_STATUS, e)) throw e
             }
         }
         if (ReadCommand.DYNAMIC_VARIABLES !in disabled) {
             try {
                 val batch = MeasurementDecoder.dynamic(client.read(identity.address, ReadCommand.DYNAMIC_VARIABLES))
+                timeouts.remove(ReadCommand.DYNAMIC_VARIABLES)
                 return batch.copy(values = batch.values.mapIndexed { i, v -> v.copy(variableCode = assignments?.get(i), classification = classifications?.get(i)) })
             } catch (e: HartResponseException) {
+                timeouts.remove(ReadCommand.DYNAMIC_VARIABLES)
                 if (e.responseCode != 64) throw e
                 disabled += ReadCommand.DYNAMIC_VARIABLES
                 report("Команда 3 не поддерживается; переход к 1")
+            } catch (e: HartTimeoutException) {
+                if (!fallbackAfterTimeout(ReadCommand.DYNAMIC_VARIABLES, e)) throw e
             }
         }
         return MeasurementDecoder.primary(client.read(identity.address, ReadCommand.PRIMARY_VARIABLE))
+    }
+    private fun fallbackAfterTimeout(command: ReadCommand, error: HartTimeoutException): Boolean {
+        if (error.malformedFrames) { timeouts.remove(command); return false }
+        val count = (timeouts[command] ?: 0) + 1
+        timeouts[command] = count
+        if (count < 2) return false
+        disabled += command
+        report("Команда ${command.number}: $count последовательных таймаута без корректного ответа; временный резервный опрос до новой сессии. Это не ответ «команда не поддерживается».")
+        return true
     }
 }

@@ -6,6 +6,8 @@ import android.app.Application
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Intent
+import java.io.File
+import java.io.OutputStream
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
@@ -26,24 +28,52 @@ data class SessionState(
     val pendingConnection: Communicator? = null, val monitor: MonitorState = MonitorState(),
     val diagnostics: List<DiagnosticEntry> = emptyList(), val notice: String? = null,
     val archives: List<Pair<String, SessionInfo>> = emptyList(), val saving: Boolean = false,
-    val active: Boolean = false,
+    val active: Boolean = false, val detailedDiagnostics: Boolean = false,
+    val diagnosticIncomplete: Boolean = false, val serviceRunning: Boolean = false,
 )
 
-class SessionController(private val app: Application) {
+class SessionController(private val app: Application, private val connectionFactory: (suspend (String) -> MonitorConnection)? = null) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow(SessionState())
     val state = mutableState.asStateFlow()
     val history = SessionHistory(java.io.File(app.filesDir, "active-session"), java.io.File(app.filesDir, "sessions"))
+    private val journal = DiagnosticJournal(File(app.filesDir, "diagnostics/current.txt"))
     private val archiveActions = Mutex()
     private var engine: MonitoringEngine? = null
     private var observer: Job? = null
     private var promptShown = false
     private val adapter get() = app.getSystemService(BluetoothManager::class.java)?.adapter
     init { history.cleanOrphans(); refreshArchives() }
-    fun append(entry: DiagnosticEntry) { mutableState.update { it.copy(diagnostics = (it.diagnostics + entry).takeLast(512)) } }
+    fun append(entry: DiagnosticEntry) {
+        val accepted = runCatching { journal.append(entry) }.getOrElse {
+            notice("Ошибка временного HEX-журнала: ${it.message}"); false
+        }
+        if (accepted || entry.kind != "RX-CHUNK") mutableState.update { it.copy(
+            diagnostics = (it.diagnostics + entry).takeLast(512), diagnosticIncomplete = journal.incomplete) }
+    }
+    fun detailedDiagnostics(value: Boolean) {
+        journal.detailed = value
+        mutableState.update { it.copy(detailedDiagnostics = value) }
+        event(if (value) "Подробная диагностика включена пользователем" else "Подробная диагностика выключена")
+    }
+    fun writeHex(output: OutputStream) = journal.copyTo(output)
+    fun diagnosticText() = journal.text()
+    fun shareHex(): File {
+        val directory = File(app.cacheDir, "hex-exports").apply { mkdirs() }
+        directory.listFiles()?.sortedByDescending { it.lastModified() }?.drop(2)?.forEach { it.delete() }
+        return File(directory, "hart-hex-${System.currentTimeMillis()}.txt").also { file -> file.outputStream().use(::writeHex) }
+    }
+    fun activityLifecycle(event: String) {
+        val m = state.value.monitor
+        append(DiagnosticEntry(Instant.now(), "ACTIVITY", "$event; active=${state.value.active}; id=${m.identity?.uniqueKey}; started=${m.startedAt}; phase=${m.phase}; service=${state.value.serviceRunning}"))
+    }
+    fun serviceLifecycle(event: String, running: Boolean? = null) {
+        if (running != null) mutableState.update { it.copy(serviceRunning = running) }
+        append(DiagnosticEntry(Instant.now(), "SERVICE", event))
+    }
     private fun event(text: String) = append(DiagnosticEntry(Instant.now(), "SESSION", text))
     fun notice(text: String) { mutableState.update { it.copy(notice = text) } }
-    fun clearDiagnostics() { mutableState.update { it.copy(diagnostics = emptyList()) } }
+    fun clearDiagnostics() { scope.launch { runCatching { journal.clear() }.onSuccess { mutableState.update { it.copy(diagnostics = emptyList(), diagnosticIncomplete = false) } }.onFailure { notice("Ошибка очистки: ${it.message}") } } }
     @SuppressLint("MissingPermission")
     fun refreshDevices(showPrompt: Boolean = false) {
         val granted = Build.VERSION.SDK_INT < 31 || app.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -81,9 +111,11 @@ class SessionController(private val app: Application) {
             }
             override fun sample(batch: MeasurementBatch) = history.append(batch)
             override fun event(at: Instant, text: String) { history.event(at, text); append(DiagnosticEntry(at, "SESSION", text)) }
+            override fun gap(at: Instant, text: String) { history.event(at, text, gap = true); append(DiagnosticEntry(at, "SESSION", text)) }
         }
         var reader: MeasurementReader? = null
         val newEngine = MonitoringEngine(scope, connect = {
+          connectionFactory?.invoke(address) ?: run {
             val bt = adapter ?: throw IOException("Bluetooth недоступен")
             if (!bt.isEnabled) throw IOException("Bluetooth выключен")
             val device = bt.getRemoteDevice(address)
@@ -106,6 +138,7 @@ class SessionController(private val app: Application) {
                 }
                 override fun close() { transport.close(); readerClient = null }
             }
+          }
         }, sink = sink)
         engine = newEngine
         observer = scope.launch { newEngine.state.collect { monitor -> mutableState.update { it.copy(monitor = monitor) } } }
@@ -133,14 +166,15 @@ class SessionController(private val app: Application) {
         }
     }
     fun end() { if (!state.value.saving) scope.launch { archiveActions.withLock { endNow() } } }
-    private suspend fun endNow() {
-        engine?.stop(); observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
+    private suspend fun endNow(reason: String = "Завершение пользователем") {
+        event("Остановка сессии: $reason")
+        engine?.stop(reason); observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
         history.discard()
         event("Сессия завершена; временная история удалена")
         mutableState.update { it.copy(active = false, monitor = MonitorState()) }
         app.stopService(Intent(app, MonitoringService::class.java))
     }
-    fun serviceDestroyed() { scope.launch { archiveActions.withLock { if (state.value.active) endNow() } } }
+    fun serviceDestroyed() { scope.launch { archiveActions.withLock { if (state.value.active) endNow("Foreground service уничтожена системой / stopService") } } }
     fun refreshArchives() { scope.launch { try { val entries = history.list(); mutableState.update { it.copy(archives = entries) } } catch (e: Exception) { notice("Ошибка журнала: ${e.message}") } } }
     fun delete(id: String) { scope.launch { try { history.delete(id); refreshArchives() } catch (e: Exception) { notice("Ошибка удаления: ${e.message}") } } }
 }

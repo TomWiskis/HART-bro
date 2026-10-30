@@ -146,4 +146,19 @@ class MonitoringEngineTest {
         engine.start();runCurrent();assertEquals(MonitorPhase.DECISION,engine.state.value.phase)
         assertEquals(1,connects);assertEquals(1,conn.closes);engine.stop()
     }
+
+    @Test fun recoveryCountdownUsesOneDeadlineAcrossAttemptsAndDoesNotRefreshHistoryEveryTick() = runTest {
+        var identifies=0
+        val conn=TestConnection(onIdentify={if(identifies++==0)metran02 else throw HartTimeoutException("still missing")},onSample={throw HartTimeoutException("missing")})
+        val engine=MonitoringEngine(backgroundScope,{conn},MemorySink(),monotonicMillis={testScheduler.currentTime})
+        engine.start();runCurrent();advanceTimeBy(4000);runCurrent()
+        val begin=engine.state.value.recovery!!;val revision=engine.state.value.revision
+        assertEquals(4000L,begin.startedMillis);assertEquals(64000L,begin.deadlineMillis);assertEquals(LossReason.HART,begin.reason)
+        advanceTimeBy(18000);runCurrent();val later=engine.state.value.recovery!!
+        assertEquals(begin.startedMillis,later.startedMillis);assertEquals(begin.deadlineMillis,later.deadlineMillis)
+        assertEquals(18000L,later.elapsedMillis);assertEquals(42000L,later.remainingMillis);assertTrue(later.attempt>begin.attempt)
+        assertEquals(revision,engine.state.value.revision)
+        advanceTimeBy(42000);runCurrent();assertEquals(MonitorPhase.DECISION,engine.state.value.phase);assertNull(engine.state.value.recovery)
+        engine.stop()
+    }
 }

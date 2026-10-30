@@ -1,6 +1,8 @@
 package ru.hartbro.app
 
+import android.graphics.Paint
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -8,11 +10,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.conflate
 import ru.hartbro.core.*
 import java.time.Instant
 import java.time.ZoneId
@@ -20,88 +24,123 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 
 internal fun timeLabel(millis: Long): String = DateTimeFormatter.ofPattern("dd.MM HH:mm:ss.SSS").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(millis))
-private val seriesColors = listOf(Color(0xFF1565C0), Color(0xFFD84315), Color(0xFF008577), Color(0xFF9C27B0))
+private val seriesColors = listOf(Color(0xFF1976D2), Color(0xFFD84315), Color(0xFF008577), Color(0xFF9C27B0))
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revision: Long) {
-    var view by remember(archiveId) { mutableStateOf<HistoryView?>(null) }
+internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revision: Long, latest: MeasurementBatch? = null) {
+    var loaded by remember(archiveId) { mutableStateOf<HistoryWindow?>(null) }
     var error by remember(archiveId) { mutableStateOf<String?>(null) }
     var viewport by remember(archiveId) { mutableStateOf(if (archiveId == null) ChartViewport() else ChartViewport(Long.MAX_VALUE, following = false)) }
     var hidden by remember(archiveId) { mutableStateOf(setOf<String>()) }
-    var selected by remember(archiveId) { mutableStateOf<ChartPoint?>(null) }
-    LaunchedEffect(archiveId, revision, viewport) {
-        try {
-            val overview = withContext(Dispatchers.IO) { history.view(archiveId, buckets = 1) }
-            view = if (overview == null) null else {
-                val range = viewport.bounds(overview.info.startedAt, overview.end)
-                val hi = range.last; val lo = range.first
-                withContext(Dispatchers.IO) { history.view(archiveId, lo, hi) }
-            }
-            error = null
-        } catch (e: Exception) { error = "Не удалось прочитать историю: ${e.message}" }
+    var highlighted by remember(archiveId) { mutableStateOf("PV") }
+    var selectedTime by remember(archiveId) { mutableStateOf<Long?>(null) }
+    var eventsExpanded by remember { mutableStateOf(false) }
+    val currentRevision by rememberUpdatedState(revision)
+    LaunchedEffect(history, archiveId, viewport) {
+        snapshotFlow { currentRevision }.conflate().collect {
+            try {
+                loaded = withContext(Dispatchers.IO) { history.window(archiveId, viewport) }
+                error = null
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) { error = "Ошибка чтения истории: ${e.message}" }
+            delay(250) // Bound UI reads; every received sample is still written by the engine.
+        }
     }
-    val data = view
-    Text("Общий график", style = MaterialTheme.typography.titleLarge)
+    Text("Общий график", style = MaterialTheme.typography.titleMedium)
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-    if (data == null) { Text("Измерений пока нет"); return }
-    if (archiveId != null) Text("${data.info.deviceKey} · ${data.info.manufacturer}\n${data.info.communicator}\nНачало: ${timeLabel(data.info.startedAt)}")
-    val range = viewport.bounds(data.info.startedAt, data.end)
-    val hi = range.last; val lo = range.first
+    val model = loaded
+    if (model == null) { Text("Измерений пока нет"); return }
+    val data = model.view; val lo = model.range.first; val hi = model.range.last
+    val start = model.domain.first; val end = model.domain.last
     val widthMillis = (hi - lo).coerceAtLeast(1)
-    val visible = viewport.select(data.points, hidden, data.info.startedAt, data.end)
-    val groups = visible.groupBy { it.measurement.slot to it.measurement.unitCode }
+    if (archiveId != null) Text("${data.info.deviceKey} · ${data.info.manufacturer}\n${timeLabel(data.info.startedAt)}", style = MaterialTheme.typography.bodySmall)
+    val visible = data.points.filter { it.measurement.slot !in hidden }
+    val groups = visible.groupBy { it.measurement.unitCode }.toSortedMap()
+    val axes = groups.mapValues { ChartAxes.numeric(it.value.map { p -> p.measurement.value }) }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         MeasurementDecoder.slots.forEachIndexed { i, slot ->
-            FilterChip(selected = slot !in hidden, onClick = { hidden = if (slot in hidden) hidden - slot else hidden + slot },
-                label = { Text(slot, color = seriesColors[i]) })
-        }
-    }
-    Text("Независимые шкалы Y для каждой серии; значения и единицы не пересчитываются.", style = MaterialTheme.typography.bodySmall)
-    groups.forEach { (key, points) ->
-        Text("${key.first}: ${points.minOf { it.measurement.value }} … ${points.maxOf { it.measurement.value }} ${points.first().measurement.unit}",
-            color = seriesColors[MeasurementDecoder.slots.indexOf(key.first)], style = MaterialTheme.typography.bodySmall)
-    }
-    val grid = MaterialTheme.colorScheme.outlineVariant
-    val pan: (Float, Float) -> Unit = { zoom, dx ->
-        viewport = viewport.transform(data.info.startedAt, data.end, zoom, dx)
-    }
-    Canvas(Modifier.fillMaxWidth().height(260.dp)
-        .pointerInput(hi, lo) { detectTransformGestures { _, offset, zoom, _ -> pan(zoom, offset.x / size.width.coerceAtLeast(1)) } }
-        .pointerInput(visible, lo, hi) { detectTapGestures { offset ->
-            val target = lo + (offset.x / size.width * widthMillis).toLong()
-            selected = visible.minByOrNull { abs(it.time - target) }
-        } }) {
-        repeat(5) { n -> val y = size.height * n / 4; drawLine(grid, Offset(0f, y), Offset(size.width, y)) }
-        groups.forEach { (key, points) ->
-            val min = points.minOf { it.measurement.value }.toDouble()
-            val max = points.maxOf { it.measurement.value }.toDouble()
-            fun position(p: ChartPoint) = Offset(((p.time - lo).toDouble() / widthMillis * size.width).toFloat(),
-                (size.height * (0.95 - 0.9 * if (max == min) 0.5 else (p.measurement.value - min) / (max - min))).toFloat())
-            val color = seriesColors[MeasurementDecoder.slots.indexOf(key.first)]
-            var previous: ChartPoint? = null
-            points.forEach { p ->
-                val last = previous
-                if (last != null && last.segment == p.segment) drawLine(color, position(last), position(p), 2.dp.toPx())
-                drawCircle(color, 2.dp.toPx(), position(p)); previous = p
+            val value = if (archiveId == null) latest?.values?.find { it.slot == slot } else data.points.lastOrNull { it.measurement.slot == slot }?.measurement
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Checkbox(checked = slot !in hidden, onCheckedChange = { hidden = if (it) hidden - slot else hidden + slot })
+                Text("$slot · ${value?.takeIf { it.plottable }?.let { "${it.value} ${it.unit}" } ?: "—"}${if (highlighted == slot) " ●" else ""}",
+                    color = seriesColors[i], style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.clickable { highlighted = slot }.testTag("series-$slot"))
             }
         }
     }
-    Text("${timeLabel(lo)} — ${timeLabel(hi)}", style = MaterialTheme.typography.bodySmall)
-    selected?.let { p -> Text("${timeLabel(p.time)} · ${p.measurement.slot}: ${p.measurement.value} ${p.measurement.unit} · ${p.measurement.quality} · команда ${p.measurement.command}") }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { pan(2f, 0f) }) { Text("Масштаб +") }
-        OutlinedButton(onClick = { pan(0.5f, 0f) }) { Text("Масштаб −") }
-        OutlinedButton(onClick = { viewport = ChartViewport(Long.MAX_VALUE, following = false) }) { Text("Вся сессия") }
-        FilterChip(selected = viewport.following, onClick = { viewport = ChartViewport(following = !viewport.following) }, label = { Text("Следовать") })
+    if (groups.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        groups.keys.forEachIndexed { i, unit -> Text("Y${i + 1}: ${HartUnits.find(unit)?.symbol ?: "HART $unit"}", style = MaterialTheme.typography.bodySmall) }
+    } else groups.keys.firstOrNull()?.let { Text("Y: ${HartUnits.find(it)?.symbol ?: "HART $it"}", style = MaterialTheme.typography.bodySmall) }
+    val grid = MaterialTheme.colorScheme.outlineVariant; val foreground = MaterialTheme.colorScheme.onSurface
+    Canvas(Modifier.fillMaxWidth().height(230.dp).testTag("measurementChart")
+        .pointerInput(lo, hi, start, end) { detectTransformGestures { _, offset, zoom, _ ->
+            val pan = if (abs(zoom - 1f) > 0.001f) 0f else offset.x / size.width.coerceAtLeast(1)
+            viewport = viewport.transform(start, end, zoom, pan)
+        } }
+        .pointerInput(visible, lo, hi) { detectTapGestures { offset ->
+            val left = ((groups.size + 1) / 2 * 49 + 6).dp.toPx()
+            val right = (groups.size / 2 * 49 + 6).dp.toPx()
+            val target = lo + ((offset.x - left) / (size.width - left - right).coerceAtLeast(1f) * widthMillis).toLong()
+            selectedTime = visible.minByOrNull { abs(it.time - target) }?.time
+        } }) {
+        val left = ((groups.size + 1) / 2 * 49 + 6).dp.toPx(); val right = (groups.size / 2 * 49 + 6).dp.toPx()
+        val plotWidth = (size.width - left - right).coerceAtLeast(1f)
+        val top = 14.dp.toPx(); val bottom = size.height - 26.dp.toPx(); val plotHeight = bottom - top
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10.sp.toPx(); color = foreground.toArgb() }
+        fun x(time: Long) = left + ((time - lo).toDouble() / widthMillis * plotWidth).toFloat()
+        repeat(5) { n -> val y = top + plotHeight * n / 4; drawLine(grid, Offset(left, y), Offset(left + plotWidth, y)) }
+        ChartAxes.timeTicks(lo, hi, (plotWidth / 75.dp.toPx()).toInt()).forEach { t ->
+            val label = ChartAxes.timeLabel(t, widthMillis)
+            val half = paint.measureText(label) / 2
+            paint.textAlign = Paint.Align.CENTER
+            drawContext.canvas.nativeCanvas.drawText(label, x(t).coerceIn(left + half, (left + plotWidth - half).coerceAtLeast(left + half)), size.height - 7.dp.toPx(), paint)
+            drawLine(grid, Offset(x(t), top), Offset(x(t), bottom))
+        }
+        groups.keys.forEachIndexed { i, unit ->
+            val axis = axes.getValue(unit)
+            val isLeft = i % 2 == 0
+            val column = i / 2
+            val axisX = if (isLeft) left - 5.dp.toPx() - column * 49.dp.toPx() else left + plotWidth + 5.dp.toPx() + column * 49.dp.toPx()
+            paint.textAlign = if (isLeft) Paint.Align.RIGHT else Paint.Align.LEFT
+            drawContext.canvas.nativeCanvas.drawText("Y${i + 1}", axisX, 10.dp.toPx(), paint)
+            axis.ticks.forEach { value ->
+                val y = bottom - ((value - axis.low) / (axis.high - axis.low) * plotHeight).toFloat()
+                drawContext.canvas.nativeCanvas.drawText(axis.label(value), axisX, y + 3.dp.toPx(), paint)
+            }
+        }
+        val series = visible.groupBy { it.measurement.slot }.entries.sortedBy { if (it.key == highlighted) 1 else 0 }
+        series.forEach { (slot, points) ->
+            val i = MeasurementDecoder.slots.indexOf(slot); val color = seriesColors[i]
+            var previous: ChartPoint? = null
+            fun position(p: ChartPoint): Offset {
+                val axis = axes.getValue(p.measurement.unitCode)
+                return Offset(x(p.time), bottom - ((p.measurement.value - axis.low) / (axis.high - axis.low) * plotHeight).toFloat())
+            }
+            points.forEach { p ->
+                val last = previous
+                if (last != null && last.segment == p.segment && last.measurement.unitCode == p.measurement.unitCode)
+                    drawLine(color, position(last), position(p), (if (slot == highlighted) 3f else 1.5f).dp.toPx(),
+                        pathEffect = if (slot == highlighted) null else PathEffect.dashPathEffect(floatArrayOf((i + 2) * 3.dp.toPx(), 3.dp.toPx())))
+                drawCircle(color, (if (slot == highlighted) 2.5 else 1.5).dp.toPx(), position(p)); previous = p
+            }
+        }
     }
-    if (data.end > data.info.startedAt) {
-        Text("Положение во времени", style = MaterialTheme.typography.bodySmall)
-        Slider(value = ((hi - data.info.startedAt).toDouble() / (data.end - data.info.startedAt)).toFloat().coerceIn(0f, 1f), onValueChange = {
-            viewport = ChartViewport(if (viewport.spanMillis == Long.MAX_VALUE) 120_000 else viewport.spanMillis,
-                data.info.startedAt + ((data.end - data.info.startedAt) * it).toLong(), false)
-        })
+    selectedTime?.let { at ->
+        visible.filter { it.time == at }.distinctBy { it.measurement.slot }.forEach { p ->
+            Text("${timeLabel(p.time)} · ${p.measurement.slot}: ${p.measurement.value} ${p.measurement.unit} · ${qualityText(p.measurement.quality)}", style = MaterialTheme.typography.bodySmall)
+        }
     }
-    Text("Разрывы означают паузу, отсутствие или недостоверность данных. Плотная история показана с сохранением экстремумов; нажмите на точку для значения.", style = MaterialTheme.typography.bodySmall)
-    data.events.takeLast(12).forEach { (at, text) -> Text("${timeLabel(at)} · $text", style = MaterialTheme.typography.bodySmall) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedButton(onClick = { viewport = viewport.transform(start, end, 2f, 0f) }) { Text("Масштаб +") }
+        OutlinedButton(onClick = { viewport = viewport.transform(start, end, 0.5f, 0f) }) { Text("Масштаб −") }
+        FilterChip(selected = viewport.following, onClick = { viewport = if (viewport.following) viewport.copy(following = false, endMillis = hi) else viewport.follow() }, label = { Text("Следовать") })
+        OutlinedButton(onClick = { viewport = viewport.all(archiveId == null) }) { Text("Вся сессия") }
+    }
+    Slider(value = if (end > start) ((hi - start).toDouble() / (end - start)).toFloat().coerceIn(0f, 1f) else 1f,
+        enabled = end > start && viewport.spanMillis < end - start,
+        onValueChange = { viewport = viewport.seek(start, end, it) })
+    Text("${ChartAxes.timeLabel(lo, widthMillis)} — ${ChartAxes.timeLabel(hi, widthMillis)}", style = MaterialTheme.typography.bodySmall)
+    TextButton(onClick = { eventsExpanded = !eventsExpanded }) { Text(if (eventsExpanded) "Скрыть события" else "События сессии") }
+    if (eventsExpanded) data.events.forEach { (at, text) -> Text("${timeLabel(at)} · $text", style = MaterialTheme.typography.bodySmall) }
 }
