@@ -19,6 +19,7 @@ class MonitoringService : Service() {
     private val controller get() = (application as HartApplication).controller
     private var wakeLock: PowerManager.WakeLock? = null
     private var ready = false
+    private var awaitingStart = true
     private var lease = 0L
     override fun onBind(intent: Intent?) = null
     override fun onCreate() {
@@ -55,7 +56,7 @@ class MonitoringService : Service() {
             var renewed = 0L
             while (isActive) {
                 val state = controller.state.value
-                val working = state.active && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
+                val working = awaitingStart || state.active && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
                 if (working && (wakeLock?.isHeld != true || SystemClock.elapsedRealtime() - renewed >= 300_000)) {
                     wakeLock?.acquire(600_000); renewed = SystemClock.elapsedRealtime()
                 } else if (!working && wakeLock?.isHeld == true) wakeLock?.release()
@@ -66,9 +67,10 @@ class MonitoringService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val address = intent?.getStringExtra("address")
         controller.serviceLifecycle("onStartCommand id=$startId; active=${controller.state.value.active}; hasAddress=${address != null}")
-        if (!ready) { stopSelf(); return START_NOT_STICKY }
+        if (!ready) { awaitingStart = false; stopSelf(); return START_NOT_STICKY }
         if (address != null) controller.start(address, intent.getStringExtra("name") ?: "VIATOR")
         else if (!controller.state.value.active) stopSelf() // An empty delivery must not stop an already active session.
+        awaitingStart = false
         return START_NOT_STICKY
     }
     override fun onTaskRemoved(rootIntent: Intent?) {
