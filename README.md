@@ -1,3 +1,16 @@
+# HART-бро 0.2.1 — исправления по аппаратному испытанию 0.2.0
+
+- [Скачать APK 0.2.1 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.2.1-debug.apk?download=1), versionCode 4.
+- [Скачать результаты проверок](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.2.1-test-results.zip?download=1).
+- [Успешный CI: обе задачи и два Android-теста](https://github.com/TomWiskis/HART-bro/actions/runs/41058553285).
+- [Изменения и причины](https://github.com/TomWiskis/HART-bro/blob/main/docs/CHANGES_0.2.1.md), [отчёт](https://github.com/TomWiskis/HART-bro/blob/main/docs/VALIDATION_0.2.1.md), [один повторный сеанс на Метран-150](https://github.com/TomWiskis/HART-bro/blob/main/docs/METRAN_TEST_0.2.1.md).
+
+**Обновление поверх 0.2.0:** подпись сохранена, application ID прежний. Устанавливайте APK без удаления приложения/очистки данных, старые архивы сохраняются. Сертификат SHA-256: `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`. APK из GitHub Actions может иметь другую debug-подпись — для обновления используйте эту ссылку. Для закрытого репозитория нужен вход в GitHub в том же браузере.
+
+122 JVM-теста и 2 instrumentation-теста Android 16/API 36 прошли без ошибок и пропусков; сборка APK успешна, Lint 0 ошибок/1 предупреждение. Контрольные суммы в SHA256SUMS. На физическом VIATOR новая 0.2.1 ещё требует повторной проверки; программный тестовый транспорт не входит в APK. Предыдущие APK и отчёты ниже сохранены. Команд записи нет.
+
+---
+
 # HART-бро 0.2.0 — тестовая сборка мониторинга
 
 **Внимание: другой debug-сертификат, исходный ключ 0.1.1 недоступен. APK 0.2.0 нельзя установить поверх 0.1.1. Используйте отдельный телефон без прежней установки; не удаляйте 0.1.1 ради испытания.** Application ID остался `ru.hartbro.app`. Предыдущие APK ниже сохранены.
