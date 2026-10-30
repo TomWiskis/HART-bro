@@ -42,6 +42,10 @@ class ReportExportTest {
                     assertTrue(pdf.pageCount >= 2)
                     repeat(pdf.pageCount) { index -> pdf.openPage(index).use { page ->
                         assertEquals(595, page.width); assertEquals(842, page.height)
+                        if (index == 0) {
+                            val text = page.textContents.joinToString(" ") { it.text }
+                            assertTrue("PDF Cyrillic title must remain readable/extractable", text.contains("Метран"))
+                        }
                         val bitmap = Bitmap.createBitmap(595, 842, Bitmap.Config.ARGB_8888)
                         page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
                         val pixels = IntArray(595 * 842); bitmap.getPixels(pixels, 0, 595, 0, 0, 595, 842)

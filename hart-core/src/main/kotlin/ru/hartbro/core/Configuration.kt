@@ -6,9 +6,9 @@ import java.time.Instant
 
 /** Read-only, deliberately partial configuration. Raw reply bytes preserve IEEE-754 bits and HART codes. */
 data class ConfigValue(val value: String, val command: Int, val unitCode: Int? = null)
-data class ConfigResponse(val command: Int, val rawHex: String, val receivedAt: String, val deviceStatus: Int?, val error: String? = null)
+data class ConfigResponse(val command: Int, val rawHex: String, val receivedAt: String, val deviceStatus: Int?, val error: String? = null, val responseCode: Int? = null)
 data class ConfiguredRange(val lower: Float, val upper: Float, val unitCode: Int) {
-    val label: String get() = "${number(lower)}…${number(upper)} ${HartUnits.find(unitCode)?.symbol ?: "HART $unitCode"}"
+    val label: String get() = "${number(lower)}…${number(upper)} ${when (unitCode) { 11 -> "Па"; 12 -> "кПа"; 237 -> "МПа"; else -> HartUnits.find(unitCode)?.symbol ?: "HART $unitCode" }}"
     private fun number(value: Float) = value.toString().removeSuffix(".0").replace('-', '−').replace('.', ',')
 }
 data class ConfigurationSnapshot(val parameters: Map<String, ConfigValue> = emptyMap(), val responses: List<ConfigResponse> = emptyList()) {
@@ -20,19 +20,19 @@ data class ConfigurationSnapshot(val parameters: Map<String, ConfigValue> = empt
         return if (lo.isFinite() && hi.isFinite() && unit !in setOf(250, 251)) ConfiguredRange(lo, hi, unit) else null
     }
     fun write(out: DataOutput) {
-        out.writeInt(1); out.writeInt(parameters.size)
+        out.writeInt(2); out.writeInt(parameters.size)
         parameters.forEach { (key, v) -> out.writeUTF(key); out.writeUTF(v.value); out.writeInt(v.command); out.writeInt(v.unitCode ?: -1) }
         out.writeInt(responses.size)
-        responses.forEach { r -> out.writeInt(r.command); out.writeUTF(r.rawHex); out.writeUTF(r.receivedAt); out.writeInt(r.deviceStatus ?: -1); out.writeUTF(r.error ?: "") }
+        responses.forEach { r -> out.writeInt(r.command); out.writeUTF(r.rawHex); out.writeUTF(r.receivedAt); out.writeInt(r.deviceStatus ?: -1); out.writeUTF(r.error ?: ""); out.writeInt(r.responseCode ?: -1) }
     }
     companion object {
         fun read(input: DataInput): ConfigurationSnapshot {
-            require(input.readInt() == 1) { "Неизвестная версия снимка конфигурации" }
+            val version = input.readInt(); require(version in 1..2) { "Неизвестная версия снимка конфигурации" }
             val n = input.readInt(); require(n in 0..100)
             val params = linkedMapOf<String, ConfigValue>()
             repeat(n) { val key = input.readUTF(); params[key] = ConfigValue(input.readUTF(), input.readInt(), input.readInt().takeIf { it >= 0 }) }
             val count = input.readInt(); require(count in 0..50)
-            val replies = List(count) { ConfigResponse(input.readInt(), input.readUTF(), input.readUTF(), input.readInt().takeIf { it >= 0 }, input.readUTF().ifEmpty { null }) }
+            val replies = List(count) { ConfigResponse(input.readInt(), input.readUTF(), input.readUTF(), input.readInt().takeIf { it >= 0 }, input.readUTF().ifEmpty { null }, if (version >= 2) input.readInt().takeIf { it >= 0 } else null) }
             return ConfigurationSnapshot(params, replies)
         }
     }
@@ -71,8 +71,8 @@ object ConfigurationDecoder {
             "deviceDateRaw" to ConfigValue(data.copyOfRange(18, 21).hex(), 13))
     }
     fun longTag(data: ByteArray): Map<String, ConfigValue> {
-        require(data.size == 32 && data.all { it.u8() == 0 || it.u8() in 32..126 }) { "Команда 20: неверный длинный TAG" }
-        return mapOf("longTag" to ConfigValue(data.toString(Charsets.US_ASCII).trimEnd('\u0000', ' '), 20))
+        require(data.size == 32 && data.all { it.u8() == 0 || it.u8() in 32..126 || it.u8() in 160..255 }) { "Команда 20: неверный длинный TAG" }
+        return mapOf("longTag" to ConfigValue(data.toString(Charsets.ISO_8859_1).trimEnd('\u0000', ' '), 20))
     }
 }
 
@@ -100,11 +100,11 @@ suspend fun readConfiguration(client: HartClient, identity: DeviceIdentity, repo
                 else -> emptyMap()
             }
             params.putAll(decoded)
-            replies += ConfigResponse(command.number, reply.data.hex(), reply.receivedAt.toString(), reply.deviceStatus)
+            replies += ConfigResponse(command.number, reply.data.hex(), reply.receivedAt.toString(), reply.deviceStatus, responseCode = 0)
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: IOException) { throw e
         } catch (e: Exception) {
-            replies += ConfigResponse(command.number, reply?.data?.hex() ?: "", reply?.receivedAt?.toString() ?: Instant.now().toString(), reply?.deviceStatus, e.message ?: e.javaClass.simpleName)
+            replies += ConfigResponse(command.number, reply?.data?.hex() ?: "", reply?.receivedAt?.toString() ?: Instant.now().toString(), reply?.deviceStatus ?: (e as? HartResponseException)?.deviceStatus, e.message ?: e.javaClass.simpleName, (e as? HartResponseException)?.responseCode)
             report("Снимок конфигурации: команда ${command.number}: ${e.message}; параметр недоступен")
         }
     }

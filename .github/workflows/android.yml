@@ -94,8 +94,8 @@ jobs:
                       names.add(case.get('name'))
                       for failure in list(case.findall('failure')) + list(case.findall('error')):
                           annotation('error', (case.get('name', '') + ': ' + (failure.text or failure.get('message', '')))[:5000])
-          expected = {'homeScreenLockAndActivityRecreationKeepOneForegroundSession', 'archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList', 'explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth', 'initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession', 'temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions', 'serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision', 'pdfSingleVariableWithCyrillicMetadataRendersA4', 'pdfDifferentUnitsAndRealGapsRenderA4WithoutInventedSamples', 'longSessionPdfAndCsvKeepAllSourceMeasurements'}
-          passed = counts['tests'] >= 9 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
+          expected = {'homeScreenLockAndActivityRecreationKeepOneForegroundSession', 'archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList', 'explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth', 'initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession', 'temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions', 'serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision', 'pdfSingleVariableWithCyrillicMetadataRendersA4', 'pdfDifferentUnitsAndRealGapsRenderA4WithoutInventedSamples', 'longSessionPdfAndCsvKeepAllSourceMeasurements', 'initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession', 'journalRenameCommentSearchComparisonAndConfirmedMultiDelete'}
+          passed = counts['tests'] >= 11 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
           annotation('notice' if passed else 'error', str(counts))
           if not counts['tests']:
               try:

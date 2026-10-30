@@ -14,8 +14,8 @@ object SessionPdf {
     fun write(history: SessionHistory, id: String, output: OutputStream) {
         val info = history.info(id); val statistics = sessionStatistics(history, id)
         val pdf = PdfDocument()
+        val report = Pages(pdf)
         try {
-            val report = Pages(pdf)
             report.heading("HART-бро · отчёт о проверке")
             report.line(info.title.ifBlank { "Проверка ${info.deviceKey}" })
             report.line("ID записи: $id")
@@ -55,7 +55,7 @@ object SessionPdf {
                 report.line("${v.receivedAt} ${v.slot}: ${v.quality}, исходное значение ${v.value}, HART ${v.unitCode}, команда ${v.command}")
             } }, event = { at, text, gap -> report.line("${timestamp(at)} ${if (gap) "[РАЗРЫВ] " else ""}$text") })
             report.finish(); pdf.writeTo(output)
-        } finally { pdf.close() }
+        } finally { report.finish(); pdf.close() }
     }
     private fun graph(report: Pages, view: HistoryView) {
         if (view.points.isEmpty()) { report.line("Нет достоверных точек для графика"); return }
@@ -67,8 +67,7 @@ object SessionPdf {
         val lo = view.info.startedAt; val hi = view.end.coerceAtLeast(lo + 1)
         val axes = groups.mapValues { ChartAxes.numeric(it.value.map { p -> p.measurement.value }) }
         fun x(at: Long) = left + ((at - lo).toDouble() / (hi - lo) * (right - left)).toFloat()
-        axes.forEach { (unit, axis) ->
-            val column = groups.keys.indexOf(unit).coerceAtMost(3)
+        axes.entries.take(4).forEachIndexed { column, (unit, axis) ->
             paint.color = Color.DKGRAY
             canvas.drawText(HartUnits.find(unit)?.symbol ?: "HART $unit", 36f + column * 44f, top - 5f, paint)
             axis.ticks.forEach { tick ->
@@ -77,7 +76,10 @@ object SessionPdf {
             }
         }
         paint.color = Color.LTGRAY
-        repeat(5) { i -> val y = top + (bottom - top) * i / 4; canvas.drawLine(left, y, right, y, paint) }
+        axes.values.first().let { axis -> axis.ticks.forEach { tick ->
+            val y = bottom - ((tick - axis.low) / (axis.high - axis.low) * (bottom - top)).toFloat()
+            canvas.drawLine(left, y, right, y, paint)
+        } }
         ChartAxes.timeTicks(lo, hi, 5).forEach { at ->
             paint.color = Color.LTGRAY; canvas.drawLine(x(at), top, x(at), bottom, paint)
             paint.color = Color.DKGRAY; val label = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(at))
@@ -97,6 +99,7 @@ object SessionPdf {
             }
         }
         report.y = bottom + 28f
+        if (axes.size > 4) report.line("Числовые деления дополнительных единиц приведены в таблице шкал ниже.", 9f)
         axes.forEach { (unit, axis) ->
             val slots = groups.getValue(unit).map { it.measurement.slot }.distinct().joinToString(", ")
             report.line("$slots · ${HartUnits.find(unit)?.symbol ?: "HART $unit"}: шкала снизу вверх ${axis.ticks.joinToString(" / ") { axis.label(it) }}", 9f)
@@ -122,6 +125,7 @@ object SessionPdf {
                 var rest = paragraph
                 if (rest.isEmpty()) { ensure(size + 5); y += size + 5 }
                 while (rest.isNotEmpty()) {
+                    paint.textSize = size; paint.color = color
                     var count = paint.breakText(rest, true, 523f, null).coerceAtLeast(1)
                     if (count < rest.length) { val space = rest.lastIndexOf(' ', count - 1); if (space > count / 2) count = space }
                     ensure(size + 5); paint.textSize = size; paint.color = color; canvas.drawText(rest.substring(0, count), 36f, y, paint); y += size + 5

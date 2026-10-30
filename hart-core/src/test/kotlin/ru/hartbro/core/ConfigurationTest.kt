@@ -39,6 +39,7 @@ class ConfigurationTest {
         val reply = hex("04 20 E0 82 08 20") + ByteArray(12) { 0x82.toByte() } + byteArrayOf(1, 2, 126)
         assertEquals("ABC", ConfigurationDecoder.tagDescription(reply)["tag"]!!.value)
         assertEquals("METRAN-150", ConfigurationDecoder.longTag("METRAN-150".padEnd(32, '\u0000').toByteArray())["longTag"]!!.value)
+        assertEquals("MÉTRAN", ConfigurationDecoder.longTag("MÉTRAN".padEnd(32, '\u0000').toByteArray(Charsets.ISO_8859_1))["longTag"]!!.value)
         assertThrows(IllegalArgumentException::class.java) { ConfigurationDecoder.longTag(ByteArray(31)) }
     }
     @Test fun snapshotRoundTripPreservesRawBytesSourceCodesAndMissingCommandErrors() {
@@ -72,7 +73,7 @@ class ConfigurationTest {
         }
         val config = readConfiguration(HartClient(transport, readAttempts = 1), metran02)
         assertEquals(listOf(13, 15, 20, 48, 50), commands)
-        assertNotNull(config.range); assertEquals(4, config.responses.count { it.error != null })
+        assertNotNull(config.range); assertEquals(4, config.responses.count { it.error != null }); assertEquals(64, config.responses.first { it.command == 20 }.responseCode)
         assertFalse(commands.any { it == 38 }); assertEquals(range030().hex(), config.responses.first { it.command == 15 }.rawHex)
     }
 }

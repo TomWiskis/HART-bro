@@ -105,5 +105,9 @@ class SessionHistoryTest {
         val before=file.readBytes();val view=h.view(name)!!
         assertEquals("old-session",view.info.id);assertEquals(2,view.events.size);assertEquals(listOf(12.5f,13.5f),view.points.map{it.measurement.value})
         assertNotEquals(view.points[0].segment,view.points[1].segment);assertArrayEquals(before,file.readBytes())
+        assertNull(h.info(name).configuration.range)
+        val csv=java.io.ByteArrayOutputStream();SessionCsv.write(h,name,csv)
+        assertTrue(csv.toString("UTF-8").contains(";PV;12.5;"));assertTrue(csv.toString("UTF-8").contains(";PV;13.5;"))
+        assertArrayEquals(before,file.readBytes())
     }
 }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import ru.hartbro.app.session.*
 import ru.hartbro.core.*
@@ -46,12 +47,12 @@ internal fun JournalScreen(state: SessionState, c: SessionController, archiveId:
             }
         }
         if (state.archives.isNotEmpty()) TextButton(onClick = { deletion = state.archives.map { it.first }.toSet() }) { Text("Очистить весь журнал…") }
-        val filtered = state.archives.filter { (_, info) -> listOf(info.title, info.deviceKey, info.configuration.tag ?: "").any { it.contains(query, true) } }
+        val filtered = state.archives.filter { (_, info) -> listOf(info.title, info.deviceKey, info.configuration.tag ?: "", info.configuration.parameters["tag"]?.value ?: "").any { it.contains(query, true) } }
         val records = if (byName) filtered.sortedBy { it.second.title.ifBlank { it.second.configuration.tag ?: it.second.deviceKey }.lowercase() } else filtered.sortedByDescending { it.second.startedAt }
         if (records.isEmpty()) Text("Записей не найдено")
         records.forEach { (id, info) -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
             Row {
-                Checkbox(id in selected, { checked -> selected = if (checked) selected + id else selected - id })
+                Checkbox(id in selected, { checked -> selected = if (checked) selected + id else selected - id }, Modifier.testTag("select-$id"))
                 Column {
                     Text(info.title.ifBlank { info.configuration.tag ?: info.deviceKey }, style = MaterialTheme.typography.titleMedium)
                     Text("${timeLabel(info.startedAt)} · ${info.durationMillis / 1000} с")

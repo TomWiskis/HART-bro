@@ -174,6 +174,46 @@ class FieldRegressionTest {
             assertEquals(MonitorPhase.ERROR, app.controller.state.value.monitor.phase)
         }
     }
+    @Test fun initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession() {
+        app.identifyDelay = 3000
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val connects = app.connections.get(); val samples = app.samples.get()
+            scenario.onActivity { app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", "00:11:22:33:44:55")) }
+            waitFor { app.controller.state.value.monitor.phase == MonitorPhase.CONNECTING }; device.pressHome()
+            waitFor { app.controller.state.value.monitor.phase == MonitorPhase.READY }
+            SystemClock.sleep(2000)
+            assertEquals(samples, app.samples.get()); assertEquals(connects + 1, app.connections.get())
+            assertNull(app.controller.history.bounds()); assertNull(app.controller.state.value.monitor.startedAt)
+            app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertEquals(MonitorPhase.READY, app.controller.state.value.monitor.phase)
+        }
+    }
+    @Test fun journalRenameCommentSearchComparisonAndConfirmedMultiDelete() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            start(scenario)
+            repeat(2) { app.controller.save(); waitFor { !app.controller.state.value.saving }; SystemClock.sleep(500) }
+            waitFor { app.controller.state.value.archives.size == 2 }
+            ui.onNodeWithText("Журнал", useUnmergedTree = true).performClick()
+            ui.onAllNodesWithText("Изменить")[0].performScrollTo().performClick()
+            ui.onNodeWithText("Название").performTextInput("Проверка А")
+            ui.onNodeWithText("Комментарий").performTextInput("Комментарий цеха")
+            ui.onNodeWithText("Сохранить").performClick()
+            waitFor { app.controller.state.value.archives.any { it.second.title == "Проверка А" && it.second.comment == "Комментарий цеха" } }
+            ui.onNodeWithText("Поиск: TAG, ID, название").performScrollTo().performTextInput("Проверка А")
+            ui.waitUntil(10000) { ui.onAllNodesWithText("Открыть").fetchSemanticsNodes().size == 1 }
+            ui.onNodeWithText("Поиск: TAG, ID, название").performTextClearance()
+            app.controller.state.value.archives.forEach { (id, _) -> ui.onNodeWithTag("select-$id").performScrollTo().performClick() }
+            ui.onNodeWithText("Сравнить две").performScrollTo().performClick()
+            ui.onNodeWithText("Сравнение конфигураций").assertIsDisplayed()
+            ui.onNodeWithText("Закрыть").performClick()
+            ui.onNodeWithText("Удалить выбранные…").performScrollTo().performClick()
+            ui.onNodeWithText("Отмена").performClick(); assertEquals(2, app.controller.state.value.archives.size)
+            ui.onNodeWithText("Удалить выбранные…").performScrollTo().performClick()
+            ui.onNodeWithText("Удалить").performClick()
+            waitFor { app.controller.state.value.archives.isEmpty() }
+            assertNotNull(app.controller.state.value.monitor.startedAt)
+        }
+    }
     @Test fun temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             start(scenario); val started = app.controller.state.value.monitor.startedAt; val connects = app.connections.get()

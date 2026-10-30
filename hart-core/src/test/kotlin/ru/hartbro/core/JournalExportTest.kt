@@ -37,7 +37,7 @@ class JournalExportTest {
         val output = ByteArrayOutputStream(); SessionCsv.write(h, id, output)
         val text = output.toString("UTF-8")
         assertTrue(text.startsWith("\uFEFFtimestamp_utc;")); assertTrue(text.contains("1970-01-01T00:00:01.234Z;9972-5FCA7F;PV;-0.01330386;"))
-        assertTrue(text.contains(";NaN;")); assertTrue(text.contains(";BAD;9;")); assertTrue(text.contains(";PV;;")); assertEquals(4, text.trim().lines().size)
+        assertTrue(text.contains(";kPa;12;")); assertTrue(text.contains("килопаскаль")); assertTrue(text.contains(";NaN;")); assertTrue(text.contains(";BAD;9;")); assertTrue(text.contains(";PV;;")); assertEquals(4, text.trim().lines().size)
     }
     @Test fun csvUtf8EscapingAndBothSeparatorsPreserveUnknownUnitLabels() = history { h, _ ->
         h.begin(metran02, "Кириллица", Instant.EPOCH)

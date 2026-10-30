@@ -2,7 +2,6 @@ package ru.hartbro.core
 
 import java.io.OutputStream
 import java.io.OutputStreamWriter
-import java.time.Instant
 
 /** Streaming UTF-8 export of source records, not the reduced chart. Float.toString round-trips received floats. */
 object SessionCsv {
@@ -16,11 +15,11 @@ object SessionCsv {
                 if (value.any { it == separator || it == '"' || it == '\r' || it == '\n' }) "\"${value.replace("\"", "\"\"")}\"" else value
             }); writer.write("\r\n")
         }
-        row(listOf("timestamp_utc", "device_id", "variable", "value", "unit", "hart_unit_code", "quality", "command", "variable_code", "raw_status", "device_status"))
+        row(listOf("timestamp_utc", "device_id", "variable", "value", "unit", "hart_unit_code", "quality", "command", "variable_code", "raw_status", "device_status", "unit_name"))
         history.records(id, sample = { batch -> batch.values.forEach { v ->
             row(listOf(v.receivedAt.toString(), info.deviceKey, v.slot,
                 if (v.quality == Quality.ABSENT) "" else v.value.toString(), v.unit, v.unitCode.toString(), v.quality.name,
-                v.command.toString(), v.variableCode?.toString() ?: "", v.rawStatus?.toString() ?: "", batch.deviceStatus.toString()))
+                v.command.toString(), v.variableCode?.toString() ?: "", v.rawStatus?.toString() ?: "", batch.deviceStatus.toString(), HartUnits.find(v.unitCode)?.name ?: "неизвестная единица HART ${v.unitCode}"))
         } })
         writer.flush()
     }

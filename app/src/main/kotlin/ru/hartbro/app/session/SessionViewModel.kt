@@ -116,6 +116,7 @@ class SessionController(private val app: Application, private val connectionFact
     fun start(address: String, name: String) {
         if (engine != null) return
         mutableState.update { it.copy(active = true, notice = null) }
+        lastTx = null; lastRx = null; lastMeasurement = null; socketState = "подготовка"
         event("Подтверждено подключение к $name ($address)")
         val sink = object : SessionSink {
             private var configuration = ConfigurationSnapshot()
@@ -127,7 +128,7 @@ class SessionController(private val app: Application, private val connectionFact
                 val previous = lastMeasurement
                 lastMeasurement = batch.receivedAt
                 history.append(batch)
-                if (previous != null && java.time.Duration.between(previous, batch.receivedAt).toMillis() > 10000)
+                if (previous != null && java.time.Duration.between(previous, batch.receivedAt).toMillis() > maxOf(10000L, state.value.monitor.periodMillis * 2))
                     event("Измерение после перерыва ${java.time.Duration.between(previous, batch.receivedAt).toMillis()} мс; причина не определена автоматически")
             }
             override fun event(at: Instant, text: String) { history.event(at, text); append(DiagnosticEntry(at, "SESSION", text)) }
@@ -234,8 +235,8 @@ class SessionController(private val app: Application, private val connectionFact
     fun deleteMany(ids: Set<String>) { scope.launch { archiveActions.withLock {
         runCatching { ids.forEach(history::delete) }.onSuccess { refreshArchives() }.onFailure { notice("Ошибка удаления: ${it.message}") }
     } } }
-    fun refreshArchives() { scope.launch { try { val entries = history.list(); mutableState.update { it.copy(archives = entries) } } catch (e: Exception) { notice("Ошибка журнала: ${e.message}") } } }
-    fun delete(id: String) { scope.launch { try { history.delete(id); refreshArchives() } catch (e: Exception) { notice("Ошибка удаления: ${e.message}") } } }
+    fun refreshArchives() { scope.launch { archiveActions.withLock { try { val entries = history.list(); mutableState.update { it.copy(archives = entries) } } catch (e: Exception) { notice("Ошибка журнала: ${e.message}") } } } }
+    fun delete(id: String) = deleteMany(setOf(id))
 }
 
 class SessionViewModel(application: Application) : AndroidViewModel(application) {
