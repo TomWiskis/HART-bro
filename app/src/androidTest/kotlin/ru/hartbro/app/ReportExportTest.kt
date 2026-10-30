@@ -25,14 +25,15 @@ class ReportExportTest {
             val history = SessionHistory(File(root, "working"), File(root, "archive"))
             val identity = DeviceIdentity.parse("FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(" ").map { it.toInt(16).toByte() }.toByteArray())
             history.begin(identity, "VIATOR", Instant.EPOCH)
+            val stepSeconds = if (count >= 10000) 10L else 1L // long case spans more than one UTC day
             repeat(count) { i ->
-                val now = Instant.ofEpochSecond(i.toLong())
+                val now = Instant.ofEpochSecond(i * stepSeconds)
                 if (gaps && i == count / 2) history.event(now, "Потеря HART; проверочный разрыв", true)
                 val values = listOf(Measurement("PV", -5.123456f + i, 12, if (i == count / 2 + 1) Quality.BAD else Quality.GOOD, now, 9)) +
                     if (multiple) listOf(Measurement("SV", 20f + i / 100f, 32, Quality.GOOD, now, 9)) else emptyList()
                 history.append(MeasurementBatch(values, 0, now))
             }
-            val id = history.snapshot(Instant.ofEpochSecond(count.toLong()))
+            val id = history.snapshot(Instant.ofEpochSecond(count * stepSeconds))
             history.edit(id, "Метран — проверка цеха №1", "Кириллица и комментарий\nвторая строка")
             val file = File(root, "report.pdf")
             file.outputStream().use { SessionPdf.write(history, id, it) }
@@ -42,10 +43,9 @@ class ReportExportTest {
                     assertTrue(pdf.pageCount >= 2)
                     repeat(pdf.pageCount) { index -> pdf.openPage(index).use { page ->
                         assertEquals(595, page.width); assertEquals(842, page.height)
-                        if (index == 0) {
-                            val text = page.textContents.joinToString(" ") { it.text }
-                            assertTrue("PDF Cyrillic title must remain readable/extractable", text.contains("Метран"))
-                        }
+                        val text = page.textContents.joinToString(" ") { it.text }
+                        if (index == 0) assertTrue("PDF Cyrillic title must remain readable/extractable", text.contains("Метран"))
+                        if (count >= 10000 && index == 1) assertTrue("Multi-day chart needs dates on its UTC axis", text.contains("01.01") || text.contains("02.01"))
                         val bitmap = Bitmap.createBitmap(595, 842, Bitmap.Config.ARGB_8888)
                         page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
                         val pixels = IntArray(595 * 842); bitmap.getPixels(pixels, 0, 595, 0, 0, 595, 842)

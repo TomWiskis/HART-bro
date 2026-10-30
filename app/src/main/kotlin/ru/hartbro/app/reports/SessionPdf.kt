@@ -5,7 +5,6 @@ import android.graphics.pdf.PdfDocument
 import java.io.OutputStream
 import java.time.Instant
 import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 import ru.hartbro.core.*
 
 /** Local A4 report. Statistics use every source record; graph uses bounded extrema-preserving reduction. */
@@ -82,7 +81,7 @@ object SessionPdf {
         } }
         ChartAxes.timeTicks(lo, hi, 5).forEach { at ->
             paint.color = Color.LTGRAY; canvas.drawLine(x(at), top, x(at), bottom, paint)
-            paint.color = Color.DKGRAY; val label = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneOffset.UTC).format(Instant.ofEpochMilli(at))
+            paint.color = Color.DKGRAY; val label = ChartAxes.timeLabel(at, hi - lo, ZoneOffset.UTC)
             canvas.drawText(label, (x(at) - paint.measureText(label) / 2).coerceIn(left, right - paint.measureText(label)), bottom + 14, paint)
         }
         view.points.groupBy { it.measurement.slot }.forEach { (slot, points) ->
