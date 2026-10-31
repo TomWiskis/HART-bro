@@ -13,6 +13,9 @@ interface MonitorConnection : AutoCloseable {
     suspend fun discover(): MeasurementBatch
     suspend fun sample(): MeasurementBatch
     suspend fun configuration(): ConfigurationSnapshot = ConfigurationSnapshot()
+    suspend fun passport(identity: DeviceIdentity): PassportReading = PassportReading(identity, emptyMap(), emptyMap(), null, java.time.Instant.now(), mapOf("connection" to "Паспортное чтение недоступно"))
+    fun prepareWalk() {}
+    fun prepareMonitoring() {}
     fun resetSession() {}
     val isOpen: Boolean get() = true
 }
@@ -51,13 +54,15 @@ class MonitoringEngine(
     private val controls = Any()
     @Volatile private var connection: MonitorConnection? = null
     @Volatile private var paused = false
+    @Volatile private var startingSession = false
     private fun publish(phase: MonitorPhase, message: String, latest: MeasurementBatch? = null) {
         mutableState.update { it.copy(phase = phase, message = message, latest = latest,
             bluetoothConnected = connection != null, revision = it.revision + 1,
             recovery = if (phase == MonitorPhase.RECOVERING) it.recovery else null) }
     }
-    fun startSession() {
-        if (state.value.phase != MonitorPhase.READY) return
+    fun startSession() = synchronized(controls) {
+        if (state.value.phase != MonitorPhase.READY || startingSession) return@synchronized
+        startingSession=true
         if (job == null) start() else sessionStarts.trySend(Unit)
     }
     fun start(automaticSession: Boolean = true) {
@@ -82,6 +87,7 @@ class MonitoringEngine(
                 val now = wallTime()
                 sink.begin(identity, now)
                 mutableState.update { it.copy(identity = identity, configuration = config, startedAt = now) }
+                startingSession=false
                 try {
                     val initial = connection!!.discover()
                     synchronized(controls) {
@@ -132,7 +138,7 @@ class MonitoringEngine(
                 closeConnection()
                 runCatching { sink.event(wallTime(), "Остановка: ${e.message}") }
                 publish(if (state.value.startedAt != null) MonitorPhase.DECISION else MonitorPhase.ERROR, "Остановка: ${e.message}")
-            }
+            } finally { startingSession=false }
         }
     }
     private suspend fun recover(expected: DeviceIdentity, reason: LossReason): Boolean {
@@ -211,9 +217,16 @@ class MonitoringEngine(
         }
         publish(if (value) MonitorPhase.PAUSED else MonitorPhase.MONITORING, if (value) "Опрос приостановлен" else "Опрос возобновлён")
     }
+    suspend fun detachReadyConnection(): MonitorConnection? {
+        check(state.value.startedAt == null && !startingSession) { "Сессия запускается или уже начата. Дождитесь её начала и завершите перед переходом в обход." }
+        job?.cancelAndJoin();job = null
+        val result = connection?.takeIf { it.isOpen };if (result == null) connection?.close();connection = null
+        publish(MonitorPhase.IDLE, "Соединение передано режиму обхода")
+        return result
+    }
     suspend fun finishSession() {
         job?.cancelAndJoin(); job = null
-        paused = false
+        paused = false;startingSession=false
         while (sessionStarts.tryReceive().isSuccess) { /* no queued duplicate starts */ }
         if (connection?.isOpen != true) closeConnection()
         mutableState.update { it.copy(startedAt = null, latest = null, recovery = null) }

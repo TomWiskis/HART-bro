@@ -59,7 +59,7 @@ class MeasurementsTest {
         assertThrows(IllegalArgumentException::class.java) { HartCodec.request(metran02.address, ReadCommand.VARIABLES_WITH_STATUS, data = hex("FA")) }
         assertThrows(IllegalArgumentException::class.java) { HartCodec.request(metran02.address, ReadCommand.ADDITIONAL_STATUS, data = byteArrayOf(0)) }
     }
-    @Test fun productionCommandAllowlistContainsOnlyApprovedReads() { assertEquals(setOf(0,1,3,8,9,13,15,20,48,50), ReadCommand.entries.map { it.number }.toSet()) }
+    @Test fun productionCommandAllowlistContainsOnlyApprovedReads() { assertEquals(setOf(0,1,3,8,9,13,14,15,16,20,48,50), ReadCommand.entries.map { it.number }.toSet()) }
     @Test fun command3DecodesDifferentUnitsAndLoopCurrentSeparately() {
         val batch = MeasurementDecoder.dynamic(reply("41 80 00 00 0C 41 20 00 00 20 41 A0 00 00 07 3F 80 00 00 FA 7F A0 00 00"))
         assertEquals(16f, batch.loopCurrent!!, 0f); assertEquals(listOf(10f,20f,1f), batch.values.take(3).map { it.value })

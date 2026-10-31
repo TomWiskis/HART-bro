@@ -1,0 +1,14 @@
+{
+  "file": "TEST-ONLY-walk-100-devices.xlsx",
+  "synthetic_data_only": true,
+  "sheets": [
+    "Приборы"
+  ],
+  "columns": 5,
+  "devices": 100,
+  "compared_cells": 505,
+  "freeze": "A2",
+  "filter": "A1:E101",
+  "serial_leading_zeros_preserved": true,
+  "date_precision_preserved": true
+}

@@ -1,10 +1,9 @@
 package ru.hartbro.core
 
 import java.io.OutputStream
-import java.io.OutputStreamWriter
 import java.time.Instant
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
+import ru.hartbro.core.XlsxPackage.Companion.column
+import ru.hartbro.core.XlsxPackage.Companion.escape
 
 /** A streaming, macro-free OOXML workbook. No Android/Office dependency and no sheet-sized XML buffers. */
 object SessionXlsx {
@@ -35,19 +34,8 @@ object SessionXlsx {
             MeasurementDecoder.slots.map { "$it — код единицы HART" } + MeasurementDecoder.slots.map { "$it — код переменной HART" } + MeasurementDecoder.slots.map { "$it — исходный статус переменной" } +
             MeasurementDecoder.slots.map { "$it — статус прибора" } + MeasurementDecoder.slots.map { "$it — исходное нечисловое значение" }
         val lastColumn = column(headers.lastIndex)
-        val zip = ZipOutputStream(object : java.io.FilterOutputStream(output) { override fun close() { flush() } })
-        try {
-        fun part(name: String, action: (java.io.Writer) -> Unit) {
-            zip.putNextEntry(ZipEntry(name).apply { time = 0 })
-            val writer = OutputStreamWriter(zip, Charsets.UTF_8); action(writer); writer.flush(); zip.closeEntry()
-        }
-        fun xml(name: String, value: String) = part(name) { it.write(value) }
-        xml("[Content_Types].xml", """<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/><Override PartName="/xl/tables/table2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/></Types>""")
-        xml("_rels/.rels", """<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>""")
-        xml("xl/workbook.xml", """<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><workbookPr date1904="0"/><bookViews><workbookView/></bookViews><sheets><sheet name="Проверка" sheetId="1" r:id="rId1"/></sheets></workbook>""")
-        xml("xl/_rels/workbook.xml.rels", """<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>""")
-        xml("xl/styles.xml", STYLES)
-        part("xl/worksheets/sheet1.xml") { writer ->
+        XlsxPackage(output, "Проверка", 2).use { workbook ->
+        workbook.part("xl/worksheets/sheet1.xml") { writer ->
             fun textCell(c: Int, row: Int, text: String, style: Int = 4) {
                 writer.write("<c r=\"${column(c)}$row\" s=\"$style\" t=\"inlineStr\"><is><t xml:space=\"preserve\">${escape(text)}</t></is></c>")
             }
@@ -93,19 +81,11 @@ object SessionXlsx {
             if (rowCount == 0L) writer.write("<row r=\"${historyHeader + 1}\"/>")
             writer.write("</sheetData><mergeCells count=\"5\"><mergeCell ref=\"A1:F1\"/><mergeCell ref=\"A2:F2\"/><mergeCell ref=\"A3:F3\"/><mergeCell ref=\"A4:F4\"/><mergeCell ref=\"A${registryEnd + 2}:F${registryEnd + 2}\"/></mergeCells><pageMargins left=\"0.25\" right=\"0.25\" top=\"0.5\" bottom=\"0.5\" header=\"0.2\" footer=\"0.2\"/><tableParts count=\"2\"><tablePart r:id=\"rId1\"/><tablePart r:id=\"rId2\"/></tableParts></worksheet>")
         }
-        xml("xl/worksheets/_rels/sheet1.xml.rels", """<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table2.xml"/></Relationships>""")
-        fun table(id: Int, name: String, ref: String, columns: List<String>) = xml("xl/tables/table$id.xml",
-            """<?xml version="1.0" encoding="UTF-8"?><table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="$id" name="$name" displayName="$name" ref="$ref" totalsRowShown="0"><autoFilter ref="$ref"/><tableColumns count="${columns.size}">${columns.mapIndexed { i, value -> "<tableColumn id=\"${i + 1}\" name=\"${escape(value)}\"/>" }.joinToString("")}</tableColumns><tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>""")
-        table(1, "Devices", "A$registryHeader:F$registryEnd", listOf("TAG", "Заводской серийный номер", "Дата выпуска", "Тип / марка прибора", "Настроенный диапазон", "HART Device ID"))
-        table(2, "Measurements", "A$historyHeader:$lastColumn$historyEnd", headers)
-        zip.finish(); zip.flush() // Caller owns the selected document stream.
-        } finally { zip.close() }
+        workbook.tables(listOf(
+            Triple("Devices", "A$registryHeader:F$registryEnd", listOf("TAG", "Заводской серийный номер", "Дата выпуска", "Тип / марка прибора", "Настроенный диапазон", "HART Device ID")),
+            Triple("Measurements", "A$historyHeader:$lastColumn$historyEnd", headers)))
+        }
     }
+
     fun excelTime(instant: Instant): Double = instant.toEpochMilli() / 86_400_000.0 + 25569.0
-    private fun column(index: Int): String { var n = index + 1; var result = ""; while (n > 0) { n--; result = ('A'.code + n % 26).toChar() + result; n /= 26 };return result }
-    private fun escape(value: String): String = buildString { value.forEach { c -> when(c) {
-        '&' -> append("&amp;"); '<' -> append("&lt;"); '>' -> append("&gt;"); '"' -> append("&quot;"); '\'' -> append("&apos;")
-        else -> if (c == '\t' || c == '\n' || c == '\r' || c >= ' ') append(c)
-    } } }
-    private val STYLES = """<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="0.###############"/><numFmt numFmtId="165" formatCode="dd.mm.yyyy hh:mm:ss.000"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="18"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF17365D"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F1"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><left style="thin"><color rgb="FFD0D8E0"/></left><right style="thin"><color rgb="FFD0D8E0"/></right><top style="thin"><color rgb="FFD0D8E0"/></top><bottom style="thin"><color rgb="FFD0D8E0"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="1" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>"""
 }

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.map
 import ru.hartbro.app.HartApplication
 import ru.hartbro.app.MainActivity
 import ru.hartbro.core.MonitorPhase
+import ru.hartbro.core.WalkPhase
 
 /** Visible, user-started owner; Activity visibility never ends the session. No restart after process death. */
 class MonitoringService : Service() {
@@ -37,6 +38,10 @@ class MonitoringService : Service() {
         scope.launch {
             // Diagnostics no longer cause dozens of synchronous notification updates per reply.
             controller.state.map { state ->
+                if (state.walkActive) {
+                    val w=state.walk;val r=w.recovery
+                    return@map "Обход · ${w.book?.rows?.size ?: 0} приборов · ${if(r!=null) "Bluetooth: осталось ${(r.remainingMillis+999)/1000} с; попытка ${r.attempt}" else w.message}"
+                }
                 val m = state.monitor
                 val recovery = m.recovery
                 val latest = m.latest
@@ -56,7 +61,7 @@ class MonitoringService : Service() {
             var renewed = 0L
             while (isActive) {
                 val state = controller.state.value
-                val working = awaitingStart || state.active && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
+                val working = awaitingStart || state.walkActive && state.walk.phase !in setOf(WalkPhase.DECISION,WalkPhase.STOPPED,WalkPhase.INTERRUPTED) || state.active && !state.walkActive && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
                 if (working && (wakeLock?.isHeld != true || SystemClock.elapsedRealtime() - renewed >= 300_000)) {
                     wakeLock?.acquire(600_000); renewed = SystemClock.elapsedRealtime()
                 } else if (!working && wakeLock?.isHeld == true) wakeLock?.release()
@@ -68,7 +73,10 @@ class MonitoringService : Service() {
         val address = intent?.getStringExtra("address")
         controller.serviceLifecycle("onStartCommand id=$startId; active=${controller.state.value.active}; hasAddress=${address != null}")
         if (!ready) { awaitingStart = false; stopSelf(); return START_NOT_STICKY }
-        if (address != null) controller.start(address, intent.getStringExtra("name") ?: "VIATOR")
+        if (address != null) {
+            if(intent.getStringExtra("mode")==ConnectionMode.WALK.name) controller.startWalkConnection(address,intent.getStringExtra("name") ?: "VIATOR")
+            else controller.start(address,intent.getStringExtra("name") ?: "VIATOR")
+        }
         else if (!controller.state.value.active) stopSelf() // An empty delivery must not stop an already active session.
         awaitingStart = false
         return START_NOT_STICKY
@@ -81,7 +89,7 @@ class MonitoringService : Service() {
         val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val open = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, "monitor").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle("HART-бро · мониторинг").setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentTitle(if(controller.state.value.walkActive) "HART-бро · обход датчиков" else "HART-бро · мониторинг").setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, "Открыть сессию", open).build()).build()
     }

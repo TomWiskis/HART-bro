@@ -27,7 +27,7 @@ import ru.hartbro.core.*
 
 /** Instrumentation-only transport; never packaged in the production APK. */
 class FieldRegressionApplication : HartApplication() {
-    val samples = AtomicInteger(); val connections = AtomicInteger(); val hartFailures = AtomicInteger(); val bluetoothFailures = AtomicInteger()
+    val walkPassportReads=AtomicInteger(); val walkBluetoothFailures=AtomicInteger(); val samples = AtomicInteger(); val connections = AtomicInteger(); val hartFailures = AtomicInteger(); val bluetoothFailures = AtomicInteger()
     @Volatile var hartDeviceId = 0x5FCA7F
     @Volatile var identifyDelay = 0L
     @Volatile var failIdentity = false
@@ -38,8 +38,18 @@ class FieldRegressionApplication : HartApplication() {
             override val isOpen get() = open
             override suspend fun identify(): DeviceIdentity {
                 delay(identifyDelay)
+                if(walkBluetoothFailures.getAndUpdate { (it-1).coerceAtLeast(0) }>0) throw IOException("Instrumentation: walk RFCOMM lost")
                 if (failIdentity) throw HartTimeoutException("Instrumentation: initial identification timeout")
-                return DeviceIdentity.parse("FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(" ").map { it.toInt(16).toByte() }.toByteArray()).copy(deviceId = hartDeviceId)
+                val raw="FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(" ").map { it.toInt(16).toByte() }.toByteArray()
+                raw[9]=(hartDeviceId shr 16).toByte();raw[10]=(hartDeviceId shr 8).toByte();raw[11]=hartDeviceId.toByte()
+                return DeviceIdentity.parse(raw)
+            }
+            override suspend fun passport(identity:DeviceIdentity):PassportReading {
+                walkPassportReads.incrementAndGet();val at=Instant.now();val range=ConfiguredRange(0f,40f,12)
+                return PassportReading(identity,mapOf(PassportField.TAG to PassportFact("TEST-${identity.deviceId}",FactSource.STANDARD_HART,20,"54 45 53 54",at),
+                    PassportField.MODEL to PassportFact("ТЕСТ модель",FactSource.STANDARD_HART,0,identity.raw.hex(),at),
+                    PassportField.RANGE to PassportFact(range.label,FactSource.STANDARD_HART,15,"00",at)),
+                    mapOf("sensorNumber" to PassportFact("1234",FactSource.STANDARD_HART,14,"00 04 D2",at),"assemblyNumber" to PassportFact("5678",FactSource.STANDARD_HART,16,"00 16 2E",at)),range,at)
             }
             override suspend fun configuration() = ConfigurationSnapshot(mapOf("tag" to ConfigValue("TEST-METRAN", 13),
                 "rangeUnit" to ConfigValue("12", 15, 12), "lowerRange" to ConfigValue("0.0", 15, 12), "upperRange" to ConfigValue("40.0", 15, 12)))
@@ -76,7 +86,7 @@ class FieldRegressionTest {
         previousScreenTimeout = device.executeShellCommand("settings get system screen_off_timeout").trim()
         device.executeShellCommand("settings put system screen_off_timeout 1200000")
         device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
-        app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
+        app.walkBluetoothFailures.set(0); app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
         app.controller.deleteMany(app.controller.state.value.archives.map { it.first }.toSet())
         waitFor { app.controller.state.value.archives.isEmpty() }
     }

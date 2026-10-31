@@ -17,3 +17,10 @@ tasks.register<JavaExec>("exportControlReview") {
     mainClass.set("ru.hartbro.testing.ExportControlReview")
     args(providers.gradleProperty("exportReviewDir").orElse(layout.buildDirectory.dir("export-review").map { it.asFile.absolutePath }).get())
 }
+
+tasks.register<JavaExec>("walkExampleReview") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("ru.hartbro.core.WalkExampleReview")
+    args(providers.gradleProperty("walkReviewDir").orElse(layout.buildDirectory.dir("walk-review").map { it.asFile.absolutePath }).get())
+}

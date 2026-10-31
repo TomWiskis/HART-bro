@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
     }
     private data class ExportRequest(val ids: List<String>, val format: ExportFormat, val separator: Char)
     private var pendingExport: ExportRequest? = null
+    private var pendingWalkFile: File? = null
     private val savePdf = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri -> finishExport(uri) }
     private val saveCsv = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri -> finishExport(uri) }
     private val saveExcel = registerForActivityResult(ActivityResultContracts.CreateDocument(SessionXlsx.MIME)) { uri -> finishExport(uri) }
@@ -61,6 +62,14 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun finishExport(uri: android.net.Uri?) {
+        val walkFile=pendingWalkFile;pendingWalkFile=null
+        if(walkFile!=null) {
+            if(uri!=null) lifecycleScope.launch {
+                try { withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri,"wt")?.use { output -> walkFile.inputStream().use { it.copyTo(output) } } ?: error("Файл недоступен") };model.controller.notice("Excel-ведомость сохранена") }
+                catch(e:Exception) { model.controller.notice("Ошибка экспорта ведомости: ${e.message}") }
+            }
+            return
+        }
         val request = pendingExport; pendingExport = null
         if (request == null || uri == null) return
         lifecycleScope.launch {
@@ -94,8 +103,21 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { model.controller.notice("Ошибка экспорта: ${e.message}") }
         }
     }
+    private fun exportWalk(book:WalkBook,share:Boolean) { lifecycleScope.launch {
+        try {
+            val file=withContext(Dispatchers.IO) {
+                val directory=File(cacheDir,"report-exports").apply { mkdirs() }
+                File(directory,"hart-walk-${book.id}-${System.currentTimeMillis()}.xlsx").also { file -> file.outputStream().use { WalkXlsx.write(book,it) } }
+            }
+            if(share) {
+                val uri=FileProvider.getUriForFile(this@MainActivity,"$packageName.files",file)
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(SessionXlsx.MIME).putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),"Отправить ведомость"))
+            } else { pendingExport=null;pendingWalkFile=file;saveExcel.launch("hart-walk-${book.id}.xlsx") }
+        } catch(e:Exception) { model.controller.notice("Ошибка экспорта ведомости: ${e.message}") }
+    } }
     override fun onSaveInstanceState(outState: Bundle) {
         pendingExport?.let { outState.putStringArrayList("exportIds", ArrayList(it.ids)); outState.putString("exportFormat", it.format.name); outState.putInt("exportSeparator", it.separator.code) }
+        pendingWalkFile?.let { outState.putString("walkExportFile",it.name) }
         super.onSaveInstanceState(outState)
     }
     private fun shareHex() { lifecycleScope.launch {
@@ -109,6 +131,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
         savedInstanceState?.let { saved ->
+            saved.getString("walkExportFile")?.takeIf { it==File(it).name && it.startsWith("hart-walk-") && it.endsWith(".xlsx") }?.let { pendingWalkFile=File(cacheDir,"report-exports/$it").takeIf(File::isFile) }
             val ids = saved.getStringArrayList("exportIds") ?: saved.getString("exportId")?.let { arrayListOf(it) }
             if (ids != null) pendingExport = ExportRequest(ids, saved.getString("exportFormat")?.let(ExportFormat::valueOf) ?: if (saved.getBoolean("exportPdf")) ExportFormat.PDF else ExportFormat.CSV, saved.getInt("exportSeparator", 59).toChar())
         }
@@ -129,7 +152,7 @@ class MainActivity : ComponentActivity() {
                         } catch (e: CancellationException) { throw e
                         } catch (e: Exception) { model.controller.notice("Буфер обмена недоступен: ${e.message}. Сохраните TXT.") }
                     } },
-                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex, export = ::export)
+                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex, export = ::export,exportWalk=::exportWalk)
             }
         }
     }
@@ -142,13 +165,20 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun HartApp(state: SessionState, c: SessionController, permission: () -> Unit, enableBluetooth: () -> Unit,
-                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit) {
+                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit, exportWalk:(WalkBook,Boolean)->Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showOther by rememberSaveable { mutableStateOf(false) }
     var endPrompt by remember { mutableStateOf(false) }
     var archiveId by rememberSaveable { mutableStateOf<String?>(null) }
     var clearHexPrompt by remember { mutableStateOf(false) }
     var technical by remember { mutableStateOf(false) }
+    var switchToWalk by remember { mutableStateOf(false) }
+    var walkEnd by remember { mutableStateOf(false) }
+    var monitorAfterWalk by remember { mutableStateOf(false) }
+    val startWalk:()->Unit = {
+        if(state.monitor.startedAt!=null) switchToWalk=true
+        else { c.requestWalk();if(!state.active) tab=0 }
+    }
     val scroll = remember(tab, archiveId) { ScrollState(0) }
     BackHandler(enabled = tab == 2 && archiveId != null) { archiveId = null }
     val monitor = state.monitor
@@ -156,7 +186,12 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
     Scaffold(topBar = { TopAppBar(title = { Text("HART-бро ${BuildConfig.VERSION_NAME}") },
         navigationIcon = { if (tab == 2 && archiveId != null) TextButton(onClick = { archiveId = null }, modifier = Modifier.testTag("archiveBack")) { Text("К списку") } }) },
         bottomBar = {
-            if (monitor.startedAt != null || tab == 1) Surface(tonalElevation = 3.dp) {
+            if(state.walkActive || tab==4 && state.walk.book?.let { it.endedAt==null }==true) Surface(tonalElevation=3.dp) {
+                FlowRow(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=12.dp,vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Button(onClick=c::saveWalk,enabled=state.walk.book?.rows?.isNotEmpty()==true,modifier=Modifier.testTag("saveWalk")){Text("Сохранить обход")}
+                    OutlinedButton(onClick={monitorAfterWalk=false;walkEnd=true},modifier=Modifier.testTag("endWalk")){Text("Завершить обход…")}
+                }
+            } else if (monitor.startedAt != null || tab == 1) Surface(tonalElevation = 3.dp) {
                 FlowRow(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (monitor.startedAt == null) {
                         Button(onClick = c::beginSession, enabled = monitor.phase == MonitorPhase.READY, modifier = Modifier.testTag("startSession")) { Text("Начать сессию") }
@@ -170,16 +205,18 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
-                listOf("Связь", "Монитор", "Журнал", "HEX").forEachIndexed { i, text -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(text, maxLines = 1) }) }
+                listOf("Связь", "Монитор", "Журнал", "HEX", "Обход").forEachIndexed { i, text -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(text, maxLines = 1) }) }
             }
             Column(Modifier.fillMaxSize().testTag(if (tab == 2 && archiveId != null) "archiveScroll" else "sectionScroll").verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(monitor.message, style = MaterialTheme.typography.titleMedium)
+                Text(if(state.walkActive) state.walk.message else monitor.message, style = MaterialTheme.typography.titleMedium)
                 state.notice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
                 if (state.diagnosticIncomplete) Text("HEX-журнал неполон: достигнут предел. Сохраните доступный TXT и очистите буфер.", color = MaterialTheme.colorScheme.error)
                 if (monitor.phase == MonitorPhase.CONNECTING) LinearProgressIndicator(Modifier.fillMaxWidth())
                 monitor.recovery?.let { RecoveryPanel(it) }
                 when (tab) {
                     0 -> {
+                        Text("Подключение для: ${if(state.requestedMode==ConnectionMode.WALK) "обхода датчиков" else "мониторинга"}")
+                        if(!state.active) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { ConnectionMode.entries.forEach { mode -> FilterChip(state.requestedMode==mode,{c.chooseMode(mode)},label={Text(if(mode==ConnectionMode.WALK) "Обход датчиков" else "Мониторинг")}) } }
                         Text("Bluetooth VIATOR", style = MaterialTheme.typography.titleLarge)
                         Text("Мониторинг цифровых HART-данных. Только чтение; давление и температура не вычисляются из 4–20 мА.")
                         when {
@@ -200,10 +237,14 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                                 }
                             } }
                         }
-                        if (state.active && monitor.startedAt == null) OutlinedButton(onClick = c::disconnect) { Text("Отключить коммуникатор") }
+                        if (state.active && !state.walkActive && monitor.startedAt == null) OutlinedButton(onClick = c::disconnect) { Text("Отключить коммуникатор") }
                         Text("В фоне работает видимая служба с уведомлением. Разрешите уведомления, чтобы получать запрос решения после потери связи. Android может остановить процесс; после принудительного завершения автоматического продолжения нет.", style = MaterialTheme.typography.bodySmall)
                     }
                     1 -> {
+                        if(state.walkActive) {
+                            Text("VIATOR занят обходом. Для мониторинга завершите ведомость.")
+                            Button(onClick={monitorAfterWalk=true;walkEnd=true}) { Text("Завершить обход и перейти к мониторингу…") }
+                        }
                         Text("Bluetooth: ${if (monitor.bluetoothConnected) "подключён" else "нет связи"}")
                         if (monitor.startedAt == null) {
                             if (!monitor.bluetoothConnected) TextButton(onClick = { tab = 0 }) { Text("Перейти к подключению") }
@@ -241,6 +282,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         }
                         TextButton(onClick = { tab = 3 }) { Text("Открыть диагностику") }
                     }
+                    4 -> WalkScreen(state,c,startWalk,{monitorAfterWalk=false;walkEnd=true},exportWalk)
                     2 -> JournalScreen(state, c, archiveId, { archiveId = it }, export)
                     3 -> {
                         Text("Технический обмен и события сессии", style = MaterialTheme.typography.titleLarge)
@@ -262,13 +304,21 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         }
     }
     state.pendingConnection?.let { d -> AlertDialog(onDismissRequest = c::cancelConnectionPrompt,
-        title = { Text("Подключить ${d.name}?") }, text = { Text("${d.address}\nБудут установлены Bluetooth-соединение и идентификация датчика. Измерительная сессия запускается отдельно кнопкой «Начать сессию». Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
-        confirmButton = { TextButton(onClick = { confirm(); tab = 1 }) { Text("Подключить") } }, dismissButton = { TextButton(onClick = c::cancelConnectionPrompt) { Text("Отмена") } }) }
+        title = { Text("Подключить ${d.name}?") }, text = { Text(if(state.requestedMode==ConnectionMode.WALK) "${d.address}\nVIATOR будет подключён для обхода. Приборы определяются автоматически; отсутствие щупов означает ожидание следующего датчика. Сохранение ведомости выполняется вручную." else "${d.address}\nБудут установлены Bluetooth-соединение и идентификация датчика. Измерительная сессия запускается отдельно кнопкой «Начать сессию». Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
+        confirmButton = { TextButton(onClick = { confirm(); tab = if(state.requestedMode==ConnectionMode.WALK) 4 else 1 }) { Text("Подключить") } }, dismissButton = { TextButton(onClick = c::cancelConnectionPrompt) { Text("Отмена") } }) }
     if (decision || endPrompt) AlertDialog(onDismissRequest = { if (!decision) endPrompt = false },
         title = { Text(if (monitor.phase == MonitorPhase.DIFFERENT_DEVICE) "Обнаружен другой прибор" else if (decision) "Связь не восстановлена" else "Завершить сессию?") },
         text = { Text(if (decision) monitor.message else "Сохранить текущий снимок или удалить временную историю? Ранее сохранённые снимки останутся в журнале.") },
         confirmButton = { TextButton(onClick = { c.save(finish = true); endPrompt = false }, enabled = !state.saving && monitor.identity != null) { Text("Сохранить сессию") } },
         dismissButton = { TextButton(onClick = { c.end(); endPrompt = false }, enabled = !state.saving) { Text("Завершить без сохранения") } })
+    if(switchToWalk) AlertDialog(onDismissRequest={switchToWalk=false},title={Text("Перейти к обходу датчиков?")},
+        text={Text("Текущая измерительная сессия будет завершена. Сохранить её перед переключением?")},
+        confirmButton={TextButton(onClick={c.requestWalk(saveSession=true);switchToWalk=false;tab=4}){Text("Сохранить и перейти")}},
+        dismissButton={Column { TextButton(onClick={c.requestWalk(saveSession=false);switchToWalk=false;tab=4}){Text("Завершить без сохранения")};TextButton(onClick={switchToWalk=false}){Text("Отмена")}}})
+    if(walkEnd) AlertDialog(onDismissRequest={walkEnd=false},title={Text("Завершить обход?")},
+        text={Text("Сохранить ведомость в журнале обходов или удалить временный черновик? Ранее сохранённые ведомости останутся. Bluetooth будет освобождён.")},
+        confirmButton={TextButton(onClick={c.finishWalk(true,monitorAfterWalk);walkEnd=false;if(monitorAfterWalk) tab=1}){Text("Сохранить и завершить")}},
+        dismissButton={Column { TextButton(onClick={c.finishWalk(false,monitorAfterWalk);walkEnd=false;if(monitorAfterWalk)tab=1}){Text("Завершить без сохранения")};TextButton(onClick={walkEnd=false}){Text("Отмена")}}})
     if (clearHexPrompt) AlertDialog(onDismissRequest = { clearHexPrompt = false }, title = { Text("Очистить временный HEX-журнал?") },
         text = { Text("Сначала сохраните нужные данные в TXT. Сохранённые вами файлы не удаляются.") },
         confirmButton = { TextButton(onClick = { c.clearDiagnostics(); clearHexPrompt = false }) { Text("Очистить") } },
