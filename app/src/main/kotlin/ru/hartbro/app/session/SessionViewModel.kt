@@ -307,10 +307,11 @@ class SessionController(private val app: Application, private val connectionFact
     } } }
     fun finishWalk(save:Boolean,monitorNext:Boolean=false) { scope.launch { archiveActions.withLock {
         walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
-        walkCatalog.finish()
-        if(save) try { walkStore.save(walkCatalog.snapshot()) } catch(e:Exception) {
+        val finishedAt=Instant.now()
+        if(save) try { walkStore.save(walkCatalog.snapshot().copy(endedAt=finishedAt)) } catch(e:Exception) {
             mutableState.update { it.copy(walkActive=false,walk=it.walk.copy(phase=WalkPhase.INTERRUPTED,bluetoothConnected=false,message="Ведомость в памяти; не удалось сохранить: ${e.message}")) };notice("Сохранение не выполнено. Повторите или экспортируйте ведомость.");return@withLock
         }
+        walkCatalog.finish(finishedAt)
         // The explicit finish releases RFCOMM. Permanent earlier snapshots remain after discard.
         try { walkStore.clearDraft() } catch(e:Exception) { notice("Обход остановлен; черновик не удалён: ${e.message}") }
         val completed=if(save) walkCatalog.snapshot() else null
@@ -326,8 +327,14 @@ class SessionController(private val app: Application, private val connectionFact
     fun renameWalk(title:String,savedId:String?=null) = mutateWalk(savedId) { rename(title) }
     private fun mutateWalk(savedId:String?,action:WalkCatalog.()->Unit) { scope.launch { archiveActions.withLock {
         runCatching {
-            if(savedId!=null) { val catalog=WalkCatalog(walkStore.load(savedId));catalog.action();walkStore.save(catalog.snapshot());refreshWalks() }
-            else { walkCatalog.action();walkStore.writeDraft(walkCatalog.snapshot());walkEngine?.documentChanged();mutableState.update { it.copy(walk=it.walk.copy(book=walkCatalog.snapshot()),walkDraftAvailable=true) } }
+            if(savedId!=null && savedId!=walkCatalog.snapshot().id) {
+                val catalog=WalkCatalog(walkStore.load(savedId));catalog.action();walkStore.save(catalog.snapshot());refreshWalks()
+            } else {
+                // A saved snapshot of the currently active walk is the same document, not a second writable copy.
+                walkCatalog.action();walkStore.writeDraft(walkCatalog.snapshot());walkEngine?.documentChanged()
+                if(savedId!=null || walkCatalog.snapshot().endedAt!=null) { walkStore.save(walkCatalog.snapshot());refreshWalks() }
+                mutableState.update { it.copy(walk=it.walk.copy(book=walkCatalog.snapshot()),walkDraftAvailable=true) }
+            }
         }.onFailure { notice("Изменение ведомости не выполнено: ${it.message}") }
     } } }
     fun deleteWalk(id:String) { scope.launch { archiveActions.withLock {

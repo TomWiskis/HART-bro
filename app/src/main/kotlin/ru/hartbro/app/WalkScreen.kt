@@ -62,11 +62,25 @@ internal fun WalkScreen(state: SessionState,c: SessionController,onStart:()->Uni
         } else Button(onClick=onStart,modifier=Modifier.testTag("startWalk")) { Text("Начать обход") }
     }
     if(book!=null) {
+        if(savedId==null) state.walk.lastReading?.let { reading ->
+            val last=book.rows.find { it.id==state.walk.lastRowId }
+            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                Text("Последний прочитанный прибор",style=MaterialTheme.typography.titleMedium)
+                Text(reading.identity.manufacturerDescription)
+                PassportField.entries.forEach { field ->
+                    val fact=last?.fields?.get(field) ?: reading.fields[field]
+                    val value=if(field in setOf(PassportField.SERIAL,PassportField.DATE) && fact?.factoryConfirmed!=true) null else fact?.value?.takeIf { it.isNotBlank() }
+                    Text("${passportNames.getValue(field)}: ${value ?: if(field==PassportField.TAG) "Не указан" else "нет данных"}${if(fact?.manual==true) " · вручную" else ""}")
+                }
+                if(last!=null) TextButton(onClick={editing=last}) { Text("Уточнить паспорт") }
+                reading.errors.forEach { (command,error) -> Text("Поле / команда $command: $error",style=MaterialTheme.typography.bodySmall) }
+            } }
+        }
         Text("${book.title} · приборов ${book.rows.size}",style=MaterialTheme.typography.titleMedium,modifier=Modifier.testTag("walkCount"))
         FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             if(savedId==null && !state.walkActive && book.endedAt!=null) Button(onClick=c::saveWalk) { Text("Сохранить изменения") }
             OutlinedButton(onClick={renaming=true}) { Text("Название") }
-            Button(onClick={export(book,false)},enabled=book.rows.isNotEmpty()) { Text("Сохранить Excel") }
+            Button(onClick={export(book,false)},enabled=book.rows.isNotEmpty()) { Text("Экспорт в Excel") }
             OutlinedButton(onClick={export(book,true)},enabled=book.rows.isNotEmpty()) { Text("Поделиться XLSX") }
         }
         if(book.pending.isNotEmpty()) {
@@ -84,7 +98,7 @@ internal fun WalkScreen(state: SessionState,c: SessionController,onStart:()->Uni
             Text("Excel содержит только подтверждённые строки ведомости. Несопоставленные чтения выше сохраняются в документе обхода.",style=MaterialTheme.typography.bodySmall)
         }
         TextButton(onClick={technical=!technical}) { Text(if(technical) "Скрыть происхождение и HEX" else "Происхождение полей и технические номера") }
-        book.rows.take(shown).forEachIndexed { i,row -> key(row.id) { Card(Modifier.fillMaxWidth().testTag("walkRow-${row.id}")) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+        book.rows.take(shown).forEachIndexed { i,row -> key(row.id) { Card(onClick={editing=row},modifier=Modifier.fillMaxWidth().testTag("walkRow-${row.id}")) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
             Text("${i+1}. ${row.text(PassportField.TAG) ?: "TAG не указан"}",style=MaterialTheme.typography.titleMedium)
             PassportField.entries.filter { it!=PassportField.TAG }.forEach { field ->
                 Text("${passportNames.getValue(field)}: ${row.text(field) ?: "нет данных"}${if(row.fields[field]?.manual==true) " · вручную" else ""}")

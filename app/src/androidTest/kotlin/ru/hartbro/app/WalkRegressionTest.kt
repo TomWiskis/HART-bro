@@ -36,6 +36,7 @@ class WalkRegressionTest {
         c.state.value.savedWalks.forEach{c.deleteWalk(it.id)};waitFor{c.state.value.savedWalks.isEmpty()}
     }
     @After fun stop() {
+        device.wakeUp();device.executeShellCommand("wm dismiss-keyguard")
         app.failIdentity=false;app.walkBluetoothFailures.set(0)
         if(c.state.value.walkActive || c.state.value.walk.book!=null) {c.finishWalk(false);waitFor{!c.state.value.walkActive}}
         c.end();waitFor{c.state.value.monitor.startedAt==null};c.disconnect();waitFor{!c.state.value.active && !c.state.value.serviceRunning}
@@ -57,10 +58,13 @@ class WalkRegressionTest {
             assertTrue(c.state.value.walk.bluetoothConnected);assertNull(c.state.value.walk.recovery)
             // Two missing probes explicitly delimit a new physical attachment.
             SystemClock.sleep(2200);app.hartDeviceId=2;app.failIdentity=false;waitFor{c.state.value.walk.book!!.rows.size==2}
-            val reads=app.walkPassportReads.get();device.pressHome();SystemClock.sleep(2100);returnToApp();scenario.recreate()
+            device.pressHome();SystemClock.sleep(2100)
+            device.sleep();assertFalse(device.isScreenOn)
+            val lockedReads=app.walkPassportReads.get();c.rereadWalk();waitFor{app.walkPassportReads.get()>lockedReads}
+            device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");returnToApp();scenario.recreate()
             ui.onNodeWithText("Обход",useUnmergedTree=true).performScrollTo().performClick()
             ui.onNodeWithTag("walkCount").assertExists();ui.onNodeWithTag("endWalk").assertExists()
-            app.hartDeviceId=0x5FCA7F;waitFor{app.walkPassportReads.get()>reads}
+            val reads=app.walkPassportReads.get();app.hartDeviceId=0x5FCA7F;waitFor{app.walkPassportReads.get()>reads}
             assertEquals(2,c.state.value.walk.book!!.rows.size);assertEquals("00042",c.state.value.walk.book!!.rows.first().text(PassportField.SERIAL))
             assertEquals(samples,app.samples.get());assertEquals(connects,app.connections.get());assertNull(c.history.bounds())
             val review=java.io.File(app.getExternalFilesDir(null),"export-review").apply{mkdirs()}
@@ -87,6 +91,11 @@ class WalkRegressionTest {
             connect(scenario,true);waitFor{c.state.value.walk.book?.rows?.size==1}
             val row=c.state.value.walk.book!!.rows.single();c.editWalk(row.id,mapOf(PassportField.SERIAL to "0007",PassportField.DATE to "2025"))
             waitFor{c.state.value.walk.book!!.rows.single().text(PassportField.SERIAL)=="0007"};c.saveWalk();waitFor{c.state.value.savedWalks.size==1}
+            val currentSavedId=c.state.value.savedWalks.single().id
+            c.editWalk(row.id,mapOf(PassportField.MODEL to "Марка активной сохранённой ведомости"),currentSavedId)
+            waitFor{c.state.value.walk.book!!.rows.single().text(PassportField.MODEL)=="Марка активной сохранённой ведомости"}
+            val reads=app.walkPassportReads.get();c.rereadWalk();waitFor{app.walkPassportReads.get()>reads}
+            assertEquals("Марка активной сохранённой ведомости",c.state.value.walk.book!!.rows.single().text(PassportField.MODEL))
             scenario.onActivity{app.stopService(Intent(app,MonitoringService::class.java))};waitFor{!c.state.value.walkActive && !c.state.value.serviceRunning}
             assertEquals(WalkPhase.INTERRUPTED,c.state.value.walk.phase);val connects=app.connections.get()
             val restored=SessionController(app);waitFor{restored.state.value.walkDraftAvailable};assertFalse(restored.state.value.active)
