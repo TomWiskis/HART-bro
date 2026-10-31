@@ -73,7 +73,7 @@ jobs:
             du -sh "${ANDROID_AVD_HOME:-$HOME/.android/avd}"
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash -o pipefail -c './gradlew :app:connectedDebugAndroidTest --no-daemon 2>&1 | tee /tmp/android-regression-gradle.log'
+          script: bash .github/scripts/android-regression.sh
       - name: Verify Android regression results
         if: always()
         run: |
@@ -94,8 +94,8 @@ jobs:
                       names.add(case.get('name'))
                       for failure in list(case.findall('failure')) + list(case.findall('error')):
                           annotation('error', (case.get('name', '') + ': ' + (failure.text or failure.get('message', '')))[:5000])
-          expected = {'homeScreenLockAndActivityRecreationKeepOneForegroundSession', 'archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList', 'explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth', 'initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession', 'temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions', 'serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision', 'pdfSingleVariableWithCyrillicMetadataRendersA4', 'pdfDifferentUnitsAndRealGapsRenderA4WithoutInventedSamples', 'longSessionPdfAndCsvKeepAllSourceMeasurements', 'initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession', 'journalRenameCommentSearchComparisonAndConfirmedMultiDelete'}
-          passed = counts['tests'] >= 11 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
+          expected = {'homeScreenLockAndActivityRecreationKeepOneForegroundSession', 'archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList', 'explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth', 'initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession', 'temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions', 'serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision', 'pdfSingleVariableWithCyrillicMetadataRendersA4', 'pdfDifferentUnitsAndRealGapsRenderA4WithoutInventedSamples', 'longSessionPdfAndCsvKeepAllSourceMeasurements', 'initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession', 'journalRenameCommentSearchComparisonAndConfirmedMultiDelete', 'realControlExcelHas68TimestampRowsAnd269NumericValues', 'realControlPdfGroupsAllSectionsIntoTablesWithReadableGraphAndNoInventedFactoryData'}
+          passed = counts['tests'] >= 13 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
           annotation('notice' if passed else 'error', str(counts))
           if not counts['tests']:
               try:
@@ -112,3 +112,4 @@ jobs:
           path: |
             app/build/outputs/androidTest-results/
             app/build/reports/androidTests/
+            app/build/outputs/export-review/

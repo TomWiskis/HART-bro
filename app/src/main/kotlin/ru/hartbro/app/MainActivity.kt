@@ -48,13 +48,17 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { model.controller.notice("Ошибка сохранения HEX: ${e.message}") }
         }
     }
-    private data class ExportRequest(val id: String, val pdf: Boolean, val separator: Char)
+    private data class ExportRequest(val ids: List<String>, val format: ExportFormat, val separator: Char)
     private var pendingExport: ExportRequest? = null
     private val savePdf = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri -> finishExport(uri) }
     private val saveCsv = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri -> finishExport(uri) }
+    private val saveExcel = registerForActivityResult(ActivityResultContracts.CreateDocument(SessionXlsx.MIME)) { uri -> finishExport(uri) }
     private fun writeReport(request: ExportRequest, output: OutputStream) {
-        if (request.pdf) SessionPdf.write(model.controller.history, request.id, output)
-        else SessionCsv.write(model.controller.history, request.id, output, request.separator)
+        when (request.format) {
+            ExportFormat.XLSX -> SessionXlsx.write(model.controller.history, request.ids, output)
+            ExportFormat.PDF -> SessionPdf.write(model.controller.history, request.ids.single(), output)
+            ExportFormat.CSV -> SessionCsv.write(model.controller.history, request.ids.single(), output, request.separator)
+        }
     }
     private fun finishExport(uri: android.net.Uri?) {
         val request = pendingExport; pendingExport = null
@@ -66,12 +70,15 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { model.controller.notice("Ошибка экспорта: ${e.message}") }
         }
     }
-    private fun export(id: String, pdf: Boolean, share: Boolean, separator: Char) {
-        val request = ExportRequest(id, pdf, separator)
-        val extension = if (pdf) "pdf" else "csv"
+    private fun export(ids: List<String>, format: ExportFormat, share: Boolean, separator: Char) {
+        val request = ExportRequest(ids, format, separator)
+        val id = ids.singleOrNull() ?: "devices-${System.currentTimeMillis()}"
+        val extension = format.extension
+        val suffix = if (format == ExportFormat.CSV) "-delimiter-${if (separator == ';') "semicolon" else "comma"}" else ""
         if (!share) {
             pendingExport = request
-            if (pdf) savePdf.launch("hart-$id.$extension") else saveCsv.launch("hart-$id.$extension")
+            val name = "hart-$id$suffix.$extension"
+            when (format) { ExportFormat.XLSX -> saveExcel.launch(name); ExportFormat.PDF -> savePdf.launch(name); ExportFormat.CSV -> saveCsv.launch(name) }
             return
         }
         lifecycleScope.launch {
@@ -79,16 +86,16 @@ class MainActivity : ComponentActivity() {
                 val file = withContext(Dispatchers.IO) {
                     val directory = File(cacheDir, "report-exports").apply { mkdirs() }
                     directory.listFiles()?.sortedByDescending { it.lastModified() }?.drop(5)?.forEach { it.delete() }
-                    File(directory, "hart-$id-${System.currentTimeMillis()}.$extension").also { file -> file.outputStream().use { writeReport(request, it) } }
+                    File(directory, "hart-$id-${System.currentTimeMillis()}$suffix.$extension").also { file -> file.outputStream().use { writeReport(request, it) } }
                 }
                 val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
-                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(if (pdf) "application/pdf" else "text/csv")
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(format.mime)
                     .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Отправить отчёт"))
             } catch (e: Exception) { model.controller.notice("Ошибка экспорта: ${e.message}") }
         }
     }
     override fun onSaveInstanceState(outState: Bundle) {
-        pendingExport?.let { outState.putString("exportId", it.id); outState.putBoolean("exportPdf", it.pdf); outState.putInt("exportSeparator", it.separator.code) }
+        pendingExport?.let { outState.putStringArrayList("exportIds", ArrayList(it.ids)); outState.putString("exportFormat", it.format.name); outState.putInt("exportSeparator", it.separator.code) }
         super.onSaveInstanceState(outState)
     }
     private fun shareHex() { lifecycleScope.launch {
@@ -101,7 +108,10 @@ class MainActivity : ComponentActivity() {
     } }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
-        savedInstanceState?.getString("exportId")?.let { pendingExport = ExportRequest(it, savedInstanceState.getBoolean("exportPdf"), savedInstanceState.getInt("exportSeparator", 59).toChar()) }
+        savedInstanceState?.let { saved ->
+            val ids = saved.getStringArrayList("exportIds") ?: saved.getString("exportId")?.let { arrayListOf(it) }
+            if (ids != null) pendingExport = ExportRequest(ids, saved.getString("exportFormat")?.let(ExportFormat::valueOf) ?: if (saved.getBoolean("exportPdf")) ExportFormat.PDF else ExportFormat.CSV, saved.getInt("exportSeparator", 59).toChar())
+        }
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 val state by model.state.collectAsStateWithLifecycle()
@@ -132,7 +142,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun HartApp(state: SessionState, c: SessionController, permission: () -> Unit, enableBluetooth: () -> Unit,
-                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (String, Boolean, Boolean, Char) -> Unit) {
+                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showOther by rememberSaveable { mutableStateOf(false) }
     var endPrompt by remember { mutableStateOf(false) }

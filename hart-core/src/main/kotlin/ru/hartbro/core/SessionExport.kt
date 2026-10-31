@@ -10,6 +10,7 @@ object SessionCsv {
         val info = history.info(id)
         val writer = OutputStreamWriter(output, Charsets.UTF_8)
         writer.write("\uFEFF") // Excel UTF-8 detection
+        writer.write("sep=$separator\r\n") // Explicit delimiter for Excel; technical readers skip this directive.
         fun row(fields: List<String>) {
             writer.write(fields.joinToString(separator.toString()) { value ->
                 if (value.any { it == separator || it == '"' || it == '\r' || it == '\n' }) "\"${value.replace("\"", "\"\"")}\"" else value

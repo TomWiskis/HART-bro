@@ -14,13 +14,14 @@ import ru.hartbro.core.*
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun JournalScreen(state: SessionState, c: SessionController, archiveId: String?, open: (String) -> Unit,
-                           export: (String, Boolean, Boolean, Char) -> Unit) {
+                           export: (List<String>, ExportFormat, Boolean, Char) -> Unit) {
     var query by remember { mutableStateOf("") }
     var byName by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var deletion by remember { mutableStateOf<Set<String>?>(null) }
     var editing by remember { mutableStateOf<Pair<String, SessionInfo>?>(null) }
     var comparison by remember { mutableStateOf<Pair<ConfigurationSnapshot, ConfigurationSnapshot>?>(null) }
+    var technicalCsv by remember { mutableStateOf(false) }
     var separator by remember { mutableStateOf(';') }
     LaunchedEffect(state.archives) { selected = selected.intersect(state.archives.map { it.first }.toSet()) }
     Text("Сохранённые сессии", style = MaterialTheme.typography.titleLarge)
@@ -35,6 +36,8 @@ internal fun JournalScreen(state: SessionState, c: SessionController, archiveId:
         if (selected.isNotEmpty()) {
             Text("Выбрано: ${selected.size}")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { export(selected.sorted(), ExportFormat.XLSX, false, separator) }) { Text("Excel по выбранным") }
+                OutlinedButton(onClick = { export(selected.sorted(), ExportFormat.XLSX, true, separator) }) { Text("Отправить ведомость") }
                 OutlinedButton(onClick = { deletion = selected }) { Text("Удалить выбранные…") }
                 OutlinedButton(onClick = {
                     val configs = state.archives.filter { it.first in selected }.map { it.second.configuration }
@@ -74,15 +77,23 @@ internal fun JournalScreen(state: SessionState, c: SessionController, archiveId:
         TextButton(onClick = { editing = archiveId to info }) { Text("Название и комментарий…") }
         if (info.comment.isNotBlank()) Text(info.comment)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { export(archiveId, true, false, separator) }) { Text("Сохранить PDF") }
-            OutlinedButton(onClick = { export(archiveId, true, true, separator) }) { Text("Отправить PDF") }
-            Button(onClick = { export(archiveId, false, false, separator) }) { Text("Сохранить CSV") }
-            OutlinedButton(onClick = { export(archiveId, false, true, separator) }) { Text("Отправить CSV") }
+            Button(onClick = { export(listOf(archiveId), ExportFormat.XLSX, false, separator) }) { Text("Сохранить Excel (.xlsx)") }
+            OutlinedButton(onClick = { export(listOf(archiveId), ExportFormat.XLSX, true, separator) }) { Text("Отправить Excel") }
+            OutlinedButton(onClick = { export(listOf(archiveId), ExportFormat.PDF, false, separator) }) { Text("Сохранить PDF") }
+            OutlinedButton(onClick = { export(listOf(archiveId), ExportFormat.PDF, true, separator) }) { Text("Отправить PDF") }
         }
-        Text("CSV: UTF-8, время UTC, десятичная точка; разделитель:", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(separator == ';', { separator = ';' }, label = { Text("; (Excel)") })
-            FilterChip(separator == ',', { separator = ',' }, label = { Text(",") })
+        TextButton(onClick = { technicalCsv = !technicalCsv }) { Text(if (technicalCsv) "Скрыть технический CSV" else "Технический CSV…") }
+        if (technicalCsv) {
+            Text("CSV: UTF-8, время UTC, десятичная точка. Первая строка sep= указывает разделитель; при программном чтении пропустите её.", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(separator == ';', { separator = ';' }, label = { Text("Точка с запятой ;") })
+                FilterChip(separator == ',', { separator = ',' }, label = { Text("Запятая ,") })
+            }
+            Text("Используемый разделитель: ${if (separator == ';') "точка с запятой (;)" else "запятая (,)"}", style = MaterialTheme.typography.bodySmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { export(listOf(archiveId), ExportFormat.CSV, false, separator) }) { Text("Сохранить CSV") }
+                OutlinedButton(onClick = { export(listOf(archiveId), ExportFormat.CSV, true, separator) }) { Text("Отправить CSV") }
+            }
         }
         MonitoringChart(c.history, archiveId, 0)
         ConfigurationPanel(info.configuration)

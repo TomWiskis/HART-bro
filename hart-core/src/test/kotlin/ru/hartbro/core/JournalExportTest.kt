@@ -36,8 +36,8 @@ class JournalExportTest {
         val id = h.snapshot(Instant.ofEpochMilli(4000))
         val output = ByteArrayOutputStream(); SessionCsv.write(h, id, output)
         val text = output.toString("UTF-8")
-        assertTrue(text.startsWith("\uFEFFtimestamp_utc;")); assertTrue(text.contains("1970-01-01T00:00:01.234Z;9972-5FCA7F;PV;-0.01330386;"))
-        assertTrue(text.contains(";kPa;12;")); assertTrue(text.contains("килопаскаль")); assertTrue(text.contains(";NaN;")); assertTrue(text.contains(";BAD;9;")); assertTrue(text.contains(";PV;;")); assertEquals(4, text.trim().lines().size)
+        assertTrue(text.startsWith("\uFEFFsep=;\r\ntimestamp_utc;")); assertTrue(text.contains("1970-01-01T00:00:01.234Z;9972-5FCA7F;PV;-0.01330386;"))
+        assertTrue(text.contains(";kPa;12;")); assertTrue(text.contains("килопаскаль")); assertTrue(text.contains(";NaN;")); assertTrue(text.contains(";BAD;9;")); assertTrue(text.contains(";PV;;")); assertEquals(5, text.trim().lines().size)
     }
     @Test fun csvUtf8EscapingAndBothSeparatorsPreserveUnknownUnitLabels() = history { h, _ ->
         h.begin(metran02, "Кириллица", Instant.EPOCH)
@@ -54,7 +54,7 @@ class JournalExportTest {
         h.event(Instant.ofEpochMilli(10000), "Пауза", gap = true)
         val id = h.snapshot(Instant.ofEpochMilli(11000))
         val out = ByteArrayOutputStream(); SessionCsv.write(h, id, out)
-        assertEquals(10001, out.toString("UTF-8").trim().lines().size)
+        assertEquals(10002, out.toString("UTF-8").trim().lines().size)
         val stats = sessionStatistics(h, id)
         assertEquals(10000L, stats.variables.single().count); assertEquals(4999.5, stats.variables.single().mean, 0.0)
         assertEquals(1000L, stats.noDataMillis); assertEquals(1L, stats.gapCount)

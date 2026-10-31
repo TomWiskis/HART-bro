@@ -7,13 +7,15 @@ android {
         applicationId = "ru.hartbro.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.3.0"
+        versionCode = 6
+        versionName = "0.3.1"
         testInstrumentationRunner = "ru.hartbro.app.FieldRegressionRunner"
     }
     signingConfigs.getByName("debug") {
         providers.environmentVariable("HARTBRO_DEBUG_KEYSTORE").orNull?.let { storeFile = file(it) }
     }
+    sourceSets.getByName("androidTest").assets.srcDir("../hart-core/src/test/resources/export")
+    sourceSets.getByName("androidTest").java.srcDir("../test-support")
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }

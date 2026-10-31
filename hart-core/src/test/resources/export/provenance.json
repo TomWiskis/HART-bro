@@ -1,0 +1,6 @@
+{
+  "sessionId": "148d023e-8504-47ef-98a8-e3f5faba7954",
+  "csvSha256": "c2cac7bec0b8cee2b12af93d785d237871a085fe803f2b2a3e661cff98a4eded",
+  "pdfSha256": "4d764e80cdb5f612c82a68ac426260b61a4b712597965d1351828b186f3dee1e",
+  "note": "CSV copied byte-for-byte from user upload. Events extracted from the supplied PDF, correcting its font ToUnicode punctuation mapping. Identity/configuration test header is reconstructed from PDF fields; original binary .hart and wire frames were not supplied. No factory serial or manufacturing date is present."
+}
