@@ -22,12 +22,8 @@ internal fun FieldRegressionApplication.stopRegressionOwners() {
         controller.end()
         await { controller.state.value.monitor.startedAt == null }
     }
-    if (controller.state.value.walk.book != null) {
-        controller.finishWalk(false)
-        await { controller.state.value.walk.book == null }
-    }
-    if (controller.state.value.walkDraftAvailable) {
+    if (controller.state.value.let { it.walk.book != null || it.walkDraftAvailable }) {
         controller.discardWalkDraft()
-        await { !controller.state.value.walkDraftAvailable }
+        await { controller.state.value.let { it.walk.book == null && !it.walkDraftAvailable } }
     }
 }
