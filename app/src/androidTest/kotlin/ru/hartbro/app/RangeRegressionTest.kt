@@ -25,12 +25,19 @@ class RangeRegressionTest {
     private val c get()=app.controller
     private val device get()=UiDevice.getInstance(instrumentation)
     private var font="1.0"
+    private var screenTimeout=""
     private fun waitFor(check:()->Boolean) {
         val deadline=SystemClock.elapsedRealtime()+25000
         while(!check() && SystemClock.elapsedRealtime()<deadline)SystemClock.sleep(100)
-        assertTrue("Range condition timed out: ${c.state.value.range}; monitor=${c.state.value.monitor.phase}",check())
+        if(!check()) {
+            val windows=runCatching{device.executeShellCommand("dumpsys window").lineSequence().filter{it.contains("mCurrentFocus") || it.contains("mFocusedApp")}.joinToString("; ")}.getOrDefault("unavailable")
+            val lifecycle=c.state.value.diagnostics.filter{it.kind=="ACTIVITY"}.takeLast(4).joinToString("; "){it.message}
+            fail("Range condition timed out: screenOn=${device.isScreenOn}; package=${device.currentPackageName}; windows=$windows; monitor=${c.state.value.monitor.phase}; walk=${c.state.value.walk.phase}; range=${c.state.value.range.phase}; lifecycle=$lifecycle")
+        }
     }
     @Before fun reset() {
+        screenTimeout=device.executeShellCommand("settings get system screen_off_timeout").trim()
+        device.executeShellCommand("settings put system screen_off_timeout 1200000")
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard")
         font=device.executeShellCommand("settings get system font_scale").trim()
         app.stopRegressionOwners()
@@ -43,6 +50,7 @@ class RangeRegressionTest {
         app.stopRegressionOwners()
         java.io.File(app.filesDir,"range-operations").deleteRecursively();c.refreshRangeRecords();waitFor{c.state.value.rangeRecords.isEmpty()}
         if(font.toFloatOrNull()!=null)device.executeShellCommand("settings put system font_scale $font") else device.executeShellCommand("settings delete system font_scale")
+        if(screenTimeout.toLongOrNull()!=null)device.executeShellCommand("settings put system screen_off_timeout $screenTimeout")
         device.executeShellCommand("wm size reset");device.executeShellCommand("wm density reset")
         instrumentation.waitForIdleSync()
     }
@@ -140,7 +148,9 @@ class RangeRegressionTest {
             // Compose can expose the new nodes before WindowManager transfers key focus.
             // Injecting Back in that interval closes the Activity instead of exercising the dialog.
             waitFor{var focused=true;scenario.onActivity{focused=it.hasWindowFocus()};!focused}
-            device.pressBack()
+            assertTrue("Screen must be awake before the native Back action",device.isScreenOn)
+            assertEquals("Dialog must belong to the foreground application",app.packageName,device.currentPackageName)
+            assertTrue(device.pressBack())
             waitFor{var focused=false;scenario.onActivity{focused=it.hasWindowFocus()};focused}
             ui.onNodeWithTag("walkEndDialog").assertDoesNotExist();ui.onNodeWithTag("endWalk").assertIsDisplayed();assertTrue(c.state.value.walkActive)
             ui.onNodeWithText("Монитор",useUnmergedTree=true).performScrollTo().performClick()

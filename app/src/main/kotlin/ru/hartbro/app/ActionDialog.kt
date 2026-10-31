@@ -1,6 +1,5 @@
 package ru.hartbro.app
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,10 +15,7 @@ import androidx.compose.ui.window.DialogProperties
 /** Actions have their own measured area; only the description consumes the remaining scrollable height. */
 @Composable
 internal fun ActionDialog(title:String,onDismiss:()->Unit,tag:String,content:@Composable ()->Unit,actions:@Composable ColumnScope.()->Unit) {
-    // Keep Back local to the dialog during the window-focus handoff as well.
-    BackHandler(onBack=onDismiss)
     Dialog(onDismissRequest=onDismiss,properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)) {
-        BackHandler(onBack=onDismiss)
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp),contentAlignment=Alignment.Center) {
             Surface(Modifier.widthIn(max=560.dp).fillMaxWidth().heightIn(max=maxHeight).testTag(tag),shape=MaterialTheme.shapes.extraLarge,tonalElevation=6.dp) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
