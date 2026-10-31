@@ -58,10 +58,9 @@ object SessionPdf {
             val configRows = info.configuration.parameters.map { (key, value) ->
                 val unit = value.unitCode?.let { "${HartUnits.find(it)?.symbol ?: "HART $it"} (код $it)" } ?: if (key == "damping") "с" else "—"
                 listOf(parameterName(key), value.value.ifBlank { "Нет данных" }, unit, value.command.toString())
-            }
+            } + info.configuration.responses.filter { it.error != null }.map { listOf("Чтение параметров", it.error!!, "—", it.command.toString()) }
             report.table(listOf("Параметр", "Значение", "Единица", "Команда HART"), listOf(170f, 170f, 105f, 78f),
                 (if (configRows.isEmpty()) listOf(listOf("Снимок", "Нет данных", "—", "—")) else configRows).asSequence())
-            info.configuration.responses.filter { it.error != null }.forEach { report.line("Команда ${it.command}: ${it.error}", 9f) }
             report.heading("Комментарий"); report.line(info.comment.ifBlank { "Нет комментария" })
             report.heading("События")
             report.beginTable(listOf("Время UTC", "Категория", "Описание"), listOf(105f, 95f, 323f))

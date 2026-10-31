@@ -3,14 +3,15 @@ package ru.hartbro.core
 import java.time.Instant
 
 /** Presentation only: one exact receive timestamp, at most one source value for each HART slot. */
-data class MeasurementRow(val at: Instant, val values: Map<String, Measurement>)
+data class MeasurementRow(val at: Instant, val values: Map<String, Measurement>, val deviceStatuses: Map<String, Int>)
 data class ExportProfile(val rows: Long, val sourceValues: Long, val exportedValues: Long,
                          val units: Map<String, Set<Int>>)
 
 fun measurementRows(history: SessionHistory, id: String, emit: (MeasurementRow) -> Unit) {
     var at: Instant? = null
     val values = linkedMapOf<String, Measurement>()
-    fun flush() { at?.let { emit(MeasurementRow(it, values.toMap())) }; values.clear() }
+    val statuses = linkedMapOf<String, Int>()
+    fun flush() { at?.let { emit(MeasurementRow(it, values.toMap(), statuses.toMap())) }; values.clear();statuses.clear() }
     history.records(id, sample = { batch ->
         batch.values.sortedBy { it.receivedAt }.forEach { value ->
             require(value.slot in MeasurementDecoder.slots)
@@ -18,10 +19,11 @@ fun measurementRows(history: SessionHistory, id: String, emit: (MeasurementRow) 
             require(previous == null || value.receivedAt >= previous) { "Временные метки истории идут назад. Для исходного порядка сохраните технический CSV." }
             if (previous != value.receivedAt) { flush(); at = value.receivedAt }
             val existing = values[value.slot]
-            require(existing == null || existing == value) {
+            require(existing == null || existing == value && statuses[value.slot] == batch.deviceStatus) {
                 "В одной временной метке ${value.receivedAt} обнаружены разные значения ${value.slot}; экспорт не будет перезаписывать измерения. Сохраните технический CSV."
             }
             values[value.slot] = value
+            statuses[value.slot] = batch.deviceStatus
         }
     })
     flush()

@@ -48,7 +48,10 @@ class ExcelExportTest {
                     assertEquals(source.value.toRawBits(), cell.value().toFloat().toRawBits())
                     assertEquals(source.quality.name, sheet.getValue("${('H'.code + slotIndex).toChar()}$row").value())
                     assertEquals(source.command.toString(), sheet.getValue("${('L'.code + slotIndex).toChar()}$row").value())
-                    assertEquals(source.unitCode.toString(), sheet.getValue("${('P'.code + slotIndex).toChar()}$row").value());count++
+                    assertEquals(source.unitCode.toString(), sheet.getValue("${('P'.code + slotIndex).toChar()}$row").value())
+                    val variableCell = sheet["${('T'.code + slotIndex).toChar()}$row"]
+                    if (source.variableCode == null) assertNull(variableCell) else assertEquals(source.variableCode.toString(), variableCell!!.value())
+                    assertEquals("0", sheet.getValue("A${('B'.code + slotIndex).toChar()}$row").value());count++
                 }
             }
         }
@@ -93,7 +96,7 @@ class ExcelExportTest {
             val id = history.snapshot();val parts = archive(ByteArrayOutputStream().also { SessionXlsx.write(history, id, it) }.toByteArray())
             val table = xml(parts.getValue("xl/tables/table2.xml")).documentElement;val first = table.getAttribute("ref").substringBefore(':').drop(1).toInt() + 1
             val sheet = cells(parts.getValue("xl/worksheets/sheet1.xml"))
-            assertNull(sheet["B$first"]);assertEquals("NaN", sheet.getValue("T$first").value());assertEquals("BAD", sheet.getValue("H$first").value())
+            assertNull(sheet["B$first"]);assertEquals("NaN", sheet.getValue("AF$first").value());assertEquals("BAD", sheet.getValue("H$first").value())
             assertNull(sheet["B${first + 1}"]);assertEquals("ABSENT", sheet.getValue("H${first + 1}").value())
             assertEquals(-12.345678f, sheet.getValue("B${first + 2}").value().toFloat(), 0f)
         } finally { root.deleteRecursively() }

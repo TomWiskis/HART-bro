@@ -32,7 +32,8 @@ object SessionXlsx {
             "$slot (${labels.ifEmpty { "единица не получена" }})"
         } + listOf("HART Device ID", "ID проверки") +
             MeasurementDecoder.slots.map { "$it — качество" } + MeasurementDecoder.slots.map { "$it — команда HART" } +
-            MeasurementDecoder.slots.map { "$it — код единицы HART" } + MeasurementDecoder.slots.map { "$it — исходное нечисловое значение" }
+            MeasurementDecoder.slots.map { "$it — код единицы HART" } + MeasurementDecoder.slots.map { "$it — код переменной HART" } + MeasurementDecoder.slots.map { "$it — исходный статус переменной" } +
+            MeasurementDecoder.slots.map { "$it — статус прибора" } + MeasurementDecoder.slots.map { "$it — исходное нечисловое значение" }
         val lastColumn = column(headers.lastIndex)
         val zip = ZipOutputStream(object : java.io.FilterOutputStream(output) { override fun close() { flush() } })
         try {
@@ -55,7 +56,7 @@ object SessionXlsx {
             }
             fun label(row: Int, text: String, style: Int = 2, height: Int = 25) { writer.write("<row r=\"$row\" ht=\"$height\" customHeight=\"1\">"); textCell(0, row, text, style); writer.write("</row>") }
             val frozenRows = if (devices.size <= 2) historyHeader else 3
-            writer.write("""<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:$lastColumn$historyEnd"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="$frozenRows" topLeftCell="A${frozenRows + 1}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A${historyHeader + 1}" sqref="A${historyHeader + 1}"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="20"/><cols><col min="1" max="1" width="27" customWidth="1"/><col min="2" max="5" width="20" customWidth="1"/><col min="6" max="7" width="27" customWidth="1"/><col min="8" max="11" width="21" customWidth="1"/><col min="12" max="23" width="18" customWidth="1"/></cols><sheetData>""")
+            writer.write("""<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:$lastColumn$historyEnd"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="$frozenRows" topLeftCell="A${frozenRows + 1}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A${historyHeader + 1}" sqref="A${historyHeader + 1}"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="20"/><cols><col min="1" max="1" width="27" customWidth="1"/><col min="2" max="5" width="20" customWidth="1"/><col min="6" max="7" width="27" customWidth="1"/><col min="8" max="11" width="21" customWidth="1"/><col min="12" max="35" width="18" customWidth="1"/></cols><sheetData>""")
             label(1, "HART-бро — ведомость и история измерений", 1, 30)
             label(2, sources.map { it.second.title.ifBlank { "Проверка ${it.second.deviceKey}" } }.distinct().joinToString("; "), 0, 25)
             label(3, "Время — UTC; числа и даты — ячейки Excel. Статусы качества и команды приведены отдельно.", 0, 30)
@@ -81,8 +82,11 @@ object SessionXlsx {
                 MeasurementDecoder.slots.forEachIndexed { i, slot -> row.values[slot]?.let { textCell(i + 7, rowNumber, it.quality.name) } }
                 MeasurementDecoder.slots.forEachIndexed { i, slot -> row.values[slot]?.let { numberCell(i + 11, rowNumber, it.command.toString(), 7) } }
                 MeasurementDecoder.slots.forEachIndexed { i, slot -> row.values[slot]?.let { numberCell(i + 15, rowNumber, it.unitCode.toString(), 7) } }
+                MeasurementDecoder.slots.forEachIndexed { i, slot -> row.values[slot]?.variableCode?.let { numberCell(i + 19, rowNumber, it.toString(), 7) } }
+                MeasurementDecoder.slots.forEachIndexed { i, slot -> row.values[slot]?.rawStatus?.let { numberCell(i + 23, rowNumber, it.toString(), 7) } }
+                MeasurementDecoder.slots.forEachIndexed { i, slot -> row.deviceStatuses[slot]?.let { numberCell(i + 27, rowNumber, it.toString(), 7) } }
                 MeasurementDecoder.slots.forEachIndexed { i, slot -> row.values[slot]?.let { v ->
-                    if (!v.value.isFinite() || v.quality == Quality.ABSENT) textCell(i + 19, rowNumber, v.value.toString())
+                    if (!v.value.isFinite() || v.quality == Quality.ABSENT) textCell(i + 31, rowNumber, v.value.toString())
                 } }
                 writer.write("</row>")
             } }

@@ -30,7 +30,7 @@ object ControlSessionFixture {
         // Remaining wire-only header fields are placeholders, not claims about the real device.
         val identity = DeviceIdentity.parse("FE 26 62 05 05 09 03 00 00 BF 2C 34".split(' ').map { it.toInt(16).toByte() }.toByteArray())
         val history = SessionHistory(File(root, "working"), File(root, "saved"))
-        history.begin(identity, "MACTekViator3B1F (00:06:66:BA:3B:1F)", Instant.parse("2026-10-31T02:24:41.670Z"), ConfigurationSnapshot(configuration))
+        history.begin(identity, "MACTekViator3B1F (00:06:66:BA:3B:1F)", Instant.parse("2026-10-31T02:24:41.670Z"), ConfigurationSnapshot(configuration, listOf(ConfigResponse(48, "", "", null, "Команда 48: требуется минимум 6 байтов"))))
         val actions = mutableListOf<Pair<Instant, () -> Unit>>()
         source.groupBy { it.receivedAt }.forEach { (at, values) -> actions += at to { history.append(MeasurementBatch(values, 0, at)) } }
         events.bufferedReader(Charsets.UTF_8).use { it.readLines() }.filter { it.isNotBlank() }.forEach { line ->

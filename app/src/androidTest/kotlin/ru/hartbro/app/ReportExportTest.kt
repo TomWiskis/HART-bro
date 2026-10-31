@@ -63,7 +63,7 @@ class ReportExportTest {
                     assertEquals(595, page.width);assertEquals(842, page.height)
                 } }
             } }
-            listOf("Прибор", "Параметр", "Значение", "Измерения", "PV", "SV", "TV", "QV", "Конфигурация", "Единица", "Команда HART", "События", "Категория", "Описание", "Заводской серийный номер", "Нет данных", "UNVERIFIED", "HART Device ID", "2662-BF2C34", "Y1", "Y2", "Y3").forEach {
+            listOf("Прибор", "Параметр", "Значение", "Измерения", "PV", "SV", "TV", "QV", "Конфигурация", "Единица", "Команда HART", "События", "Категория", "Описание", "Заводской серийный номер", "Нет данных", "UNVERIFIED", "HART Device ID", "2662-BF2C34", "Y1", "Y2", "Y3", "Чтение параметров").forEach {
                 assertTrue("PDF is missing expected table/label: $it", text.contains(it))
             }
             val stats = sessionStatistics(data.history, data.id)
