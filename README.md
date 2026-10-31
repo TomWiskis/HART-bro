@@ -1,3 +1,20 @@
+# HART-бро 0.4.0 — обход датчиков
+
+- [Скачать APK 0.4.0 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.4.0-debug.apk?download=1), versionCode 7.
+- [Тестовый XLSX на 100 искусственных приборов](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/TEST-ONLY-hart-bro-0.4.0-walk-100-devices.xlsx?download=1).
+- [Реальная контрольная сессия: новый полный Excel](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-control-148d023e-0.4.0.xlsx?download=1), 269 исходных значений в 68 временных строках.
+- [Отчёты и контрольные суммы проверки](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.4.0-test-results.zip?download=1).
+- [CI окончательной ревизии](https://github.com/TomWiskis/HART-bro/actions/runs/41204161337).
+- [Изменения и ограничения](https://github.com/TomWiskis/HART-bro/blob/main/docs/CHANGES_0.4.0.md), [проверки](https://github.com/TomWiskis/HART-bro/blob/main/docs/VALIDATION_0.4.0.md), [один аппаратный сеанс](https://github.com/TomWiskis/HART-bro/blob/main/docs/HARDWARE_TEST_0.4.0.md).
+
+Подпись и application ID прежние: устанавливайте поверх 0.3.0 **без удаления/очистки данных**, предварительно вручную сохранив важную текущую сессию. Для закрытого репозитория нужен вход в GitHub в том же браузере. Опубликованный файл использует прежний сертификат SHA-256 `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`; произвольный CI APK может иметь другой debug-ключ.
+
+172 JVM-теста и 16 фактически выполненных Android-тестов прошли без ошибок и пропусков. APK собран; Android Lint — 0 ошибок / 1 прежнее предупреждение. Контрольные суммы — в SHA256SUMS.
+
+Обход, команды 14/16, локальные паспортные поля, отдельная пятиколоночная ведомость и исправления полного Excel/PDF/CSV. Только чтение; заводские номера и даты без документации не выдуманы. Аппаратный сеанс 0.4.0 ещё предстоит. После выпуска работа остановлена до его результатов. Предыдущие сборки ниже сохранены.
+
+---
+
 # HART-бро 0.3.0 — сессии, журнал и отчёты
 
 - [Скачать APK 0.3.0 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.3.0-debug.apk?download=1), versionCode 5.
