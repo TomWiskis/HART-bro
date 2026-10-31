@@ -33,28 +33,39 @@ class RangeRegressionTest {
     @Before fun reset() {
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard")
         font=device.executeShellCommand("settings get system font_scale").trim()
+        app.stopRegressionOwners()
         app.failIdentity=false;app.identifyDelay=0;app.hartDeviceId=0x5FCA7F;app.hartFailures.set(0);app.bluetoothFailures.set(0);app.walkBluetoothFailures.set(0)
         app.rangeActual=ConfiguredRange(0f,16f,12);app.rangeMode=0;app.rangeAckDelay=0;app.rangeHoldAck=false;app.rangeTimeout=300;app.rangeWrites.set(0)
-        c.closeRange();c.finishWalk(false);c.discardWalkDraft();c.refreshRangeRecords()
+        c.refreshRangeRecords()
     }
     @After fun cleanup() {
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");app.rangeMode=0;app.rangeAckDelay=0;app.rangeHoldAck=false
-        app.stopService(Intent(app,MonitoringService::class.java));waitFor{!c.state.value.active && !c.state.value.serviceRunning && !c.state.value.rangeOwned}
-        c.closeRange();c.end();c.finishWalk(false);c.discardWalkDraft();c.disconnect()
-        SystemClock.sleep(300) // Let queued application cleanup finish before the next Activity launch.
+        app.stopRegressionOwners()
         java.io.File(app.filesDir,"range-operations").deleteRecursively();c.refreshRangeRecords();waitFor{c.state.value.rangeRecords.isEmpty()}
         if(font.toFloatOrNull()!=null)device.executeShellCommand("settings put system font_scale $font") else device.executeShellCommand("settings delete system font_scale")
         device.executeShellCommand("wm size reset");device.executeShellCommand("wm density reset")
+        instrumentation.waitForIdleSync()
     }
     private fun connect(scenario:ActivityScenario<MainActivity>,walk:Boolean=false) {
         scenario.onActivity{app.startForegroundService(Intent(app,MonitoringService::class.java).putExtra("address","00:11:22:33:44:55").putExtra("name","Instrumentation-only").putExtra("mode",if(walk)ConnectionMode.WALK.name else ConnectionMode.MONITOR.name))}
         waitFor{if(walk)c.state.value.walk.book?.rows?.size==1 && c.state.value.walkActive else c.state.value.monitor.phase==MonitorPhase.READY}
+        ui.waitUntil(15000){runCatching{ui.onAllNodesWithText("Связь",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}.getOrDefault(false)}
+    }
+    private fun openForm(action:()->Unit) {
+        val previous=c.state.value.range.token
+        action()
+        waitFor{c.state.value.let{it.rangeOwned && it.range.phase==RangePhase.FORM && it.range.token!=previous}}
+    }
+    private fun verifyRecord(id:String) {
+        val previous=c.state.value.range.token
+        c.openRange(id)
+        waitFor{c.state.value.let{it.range.token!=previous && it.range.record?.id==id && it.range.record?.outcome==RangeOutcome.SUCCEEDED && !it.rangeOwned}}
     }
     private fun open(scenario:ActivityScenario<MainActivity>,session:Boolean=false) {
         connect(scenario)
         if(session){c.beginSession();waitFor{c.state.value.monitor.latest!=null};c.period(1000)}
         ui.onNodeWithText("Монитор",useUnmergedTree=true).performScrollTo().performClick()
-        ui.onNodeWithTag("openRange").performScrollTo().performClick();waitFor{c.state.value.range.phase==RangePhase.FORM}
+        openForm{ui.onNodeWithTag("openRange").performScrollTo().performClick()}
     }
     private fun chooseTen(){ui.onNodeWithTag("rangeUpper").performScrollTo().performTextReplacement("10");ui.onNodeWithTag("rangeSet").performScrollTo().performClick();waitFor{c.state.value.range.phase==RangePhase.CONFIRM}}
     @Test fun confirmedWriteSurvivesHomeScreenLockAndRecreateWithoutRepeatAndResumesSameSession() {
@@ -83,7 +94,7 @@ class RangeRegressionTest {
             val connections=app.connections.get();val restored=SessionController(app)
             waitFor{restored.state.value.rangeRecords.any{it.id==record.id && it.outcome==RangeOutcome.UNKNOWN}}
             assertFalse(restored.state.value.active);assertEquals(connections,app.connections.get());assertEquals(1,app.rangeWrites.get())
-            c.openRange(record.id);waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned}
+            verifyRecord(record.id)
             assertEquals(1,app.rangeWrites.get())
         }
     }
@@ -92,7 +103,7 @@ class RangeRegressionTest {
             connect(scenario,walk=true);val bookId=c.state.value.walk.book!!.id;val row=c.state.value.walk.book!!.rows.single()
             c.editWalk(row.id,mapOf(PassportField.RANGE to "Локальная подпись",PassportField.SERIAL to "00042"))
             waitFor{c.state.value.walk.book!!.rows.single().text(PassportField.RANGE)=="Локальная подпись"};c.rereadWalk();SystemClock.sleep(1200);assertEquals(0,app.rangeWrites.get())
-            c.openRange();waitFor{c.state.value.range.phase==RangePhase.FORM};assertEquals(16f,c.state.value.range.snapshot!!.range.upper,0f)
+            openForm{c.openRange()};assertEquals(16f,c.state.value.range.snapshot!!.range.upper,0f)
             c.selectRange("0","10");c.confirmRange(c.state.value.range.token)
             waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned}
             waitFor{c.state.value.walk.book!!.rows.single().pendingRange?.upper==10f}
@@ -105,11 +116,11 @@ class RangeRegressionTest {
             app.rangeMode=4;open(scenario,session=true);chooseTen();ui.onNodeWithTag("rangeConfirmWrite").performClick()
             waitFor{c.state.value.range.record?.outcome==RangeOutcome.UNKNOWN && !c.state.value.rangeOwned}
             assertEquals(1,app.rangeWrites.get());val samples=app.samples.get();SystemClock.sleep(1200);assertEquals(samples,app.samples.get())
-            app.rangeMode=0;val id=c.state.value.range.record!!.id;c.openRange(id)
-            waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned};waitFor{app.samples.get()>samples && c.state.value.monitor.latest!=null}
-            c.openRange();waitFor{c.state.value.range.phase==RangePhase.FORM};c.selectRange("0","12");app.hartDeviceId=99;c.confirmRange(c.state.value.range.token)
+            app.rangeMode=0;val id=c.state.value.range.record!!.id;verifyRecord(id)
+            waitFor{app.samples.get()>samples && c.state.value.monitor.latest!=null}
+            openForm{c.openRange()};c.selectRange("0","12");app.hartDeviceId=99;c.confirmRange(c.state.value.range.token)
             waitFor{c.state.value.range.record?.outcome==RangeOutcome.DIFFERENT_DEVICE && !c.state.value.rangeOwned};assertEquals(1,app.rangeWrites.get())
-            c.openRange(acceptCurrentDevice=true);waitFor{c.state.value.range.phase==RangePhase.FORM};assertEquals(99,c.state.value.range.snapshot!!.identity.deviceId);assertNull(c.state.value.range.requested)
+            openForm{c.openRange(acceptCurrentDevice=true)};assertEquals(99,c.state.value.range.snapshot!!.identity.deviceId);assertNull(c.state.value.range.requested)
         }
     }
     private fun assertFullButtons() {
@@ -119,6 +130,7 @@ class RangeRegressionTest {
     }
     @Test fun walkEndAndMonitorTransitionDialogsKeepAllThreeActionsOnSmallLargeFontScreen() {
         device.executeShellCommand("wm size 720x1280");device.executeShellCommand("wm density 320");device.executeShellCommand("settings put system font_scale 1.6")
+        instrumentation.waitForIdleSync();SystemClock.sleep(500)
         ActivityScenario.launch(MainActivity::class.java).use{scenario->
             connect(scenario,walk=true);ui.onNodeWithText("Обход",useUnmergedTree=true).performScrollTo().performClick()
             ui.onNodeWithTag("endWalk").performClick();assertFullButtons()
@@ -130,7 +142,7 @@ class RangeRegressionTest {
             ui.onNodeWithTag("walkEndCancel").performClick();assertTrue(c.state.value.walkActive)
             ui.onNodeWithText("Завершить обход и перейти к мониторингу…").performScrollTo().performClick();ui.onNodeWithTag("walkEndSave").performClick()
             waitFor{!c.state.value.walkActive && c.state.value.monitor.phase==MonitorPhase.READY}
-            c.openRange();waitFor{c.state.value.range.phase==RangePhase.FORM};c.selectRange("0","10");waitFor{c.state.value.range.phase==RangePhase.CONFIRM}
+            openForm{c.openRange()};c.selectRange("0","10");waitFor{c.state.value.range.phase==RangePhase.CONFIRM}
             listOf("rangeConfirmWrite","rangeConfirmCancel").forEach{tag->
                 val n=ui.onNodeWithTag(tag).assertIsDisplayed().fetchSemanticsNode();assertEquals(n.size.height.toFloat(),n.boundsInWindow.height,1f)
             }

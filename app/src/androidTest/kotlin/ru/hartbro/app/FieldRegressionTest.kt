@@ -97,7 +97,8 @@ class FieldRegressionTest {
         previousScreenTimeout = device.executeShellCommand("settings get system screen_off_timeout").trim()
         device.executeShellCommand("settings put system screen_off_timeout 1200000")
         device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
-        app.rangeActual=ConfiguredRange(0f,40f,12);app.rangeMode=0;app.rangeAckDelay=0;app.rangeTimeout=300;app.walkBluetoothFailures.set(0); app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
+        app.stopRegressionOwners()
+        app.rangeActual=ConfiguredRange(0f,40f,12);app.rangeMode=0;app.rangeAckDelay=0;app.rangeHoldAck=false;app.rangeTimeout=300;app.walkBluetoothFailures.set(0); app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
         app.controller.deleteMany(app.controller.state.value.archives.map { it.first }.toSet())
         waitFor { app.controller.state.value.archives.isEmpty() }
     }
@@ -112,8 +113,7 @@ class FieldRegressionTest {
     }
     @After fun stop() {
         device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
-        app.controller.end(); waitFor { app.controller.state.value.monitor.startedAt == null }
-        app.controller.disconnect(); waitFor { !app.controller.state.value.active && !app.controller.state.value.serviceRunning }
+        app.stopRegressionOwners()
         if (previousScreenTimeout.toLongOrNull() != null) device.executeShellCommand("settings put system screen_off_timeout $previousScreenTimeout")
     }
     private fun returnToApp() {

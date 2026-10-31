@@ -31,17 +31,15 @@ class WalkRegressionTest {
     }
     @Before fun reset() {
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard")
+        app.stopRegressionOwners()
+        app.rangeActual=ConfiguredRange(0f,40f,12);app.rangeAckDelay=0;app.rangeTimeout=300;app.rangeWrites.set(0)
         app.failIdentity=false;app.identifyDelay=0;app.hartDeviceId=0x5FCA7F;app.hartFailures.set(0);app.bluetoothFailures.set(0);app.walkBluetoothFailures.set(0)
-        c.finishWalk(false);waitFor{!c.state.value.walkActive && !c.state.value.serviceRunning}
-        c.discardWalkDraft();waitFor{!c.state.value.walkDraftAvailable}
         c.state.value.savedWalks.forEach{c.deleteWalk(it.id)};waitFor{c.state.value.savedWalks.isEmpty()}
     }
     @After fun stop() {
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard")
         app.failIdentity=false;app.walkBluetoothFailures.set(0)
-        if(c.state.value.walkActive || c.state.value.walk.book!=null) {c.finishWalk(false);waitFor{!c.state.value.walkActive}}
-        c.end();waitFor{c.state.value.monitor.startedAt==null};c.disconnect();waitFor{!c.state.value.active && !c.state.value.serviceRunning}
-        c.discardWalkDraft()
+        app.stopRegressionOwners()
     }
     private fun connect(scenario:ActivityScenario<MainActivity>,walk:Boolean) {
         scenario.onActivity { app.startForegroundService(Intent(app,MonitoringService::class.java).putExtra("address","00:11:22:33:44:55").putExtra("name","Instrumentation-only").putExtra("mode",if(walk)ConnectionMode.WALK.name else ConnectionMode.MONITOR.name)) }

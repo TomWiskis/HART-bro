@@ -299,7 +299,7 @@ class SessionController(private val app: Application, private val connectionFact
                 } }
             })
             rangeEngine=worker
-            mutableState.update{it.copy(rangeOwned=true,rangeVisible=true,notice=null)}
+            mutableState.update{it.copy(rangeOwned=true,rangeVisible=true,range=worker.state.value,notice=null)}
             rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r)}}}
             if(record==null) worker.open() else worker.verifyOnly(record)
         } catch(e:Exception) {
