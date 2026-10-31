@@ -48,6 +48,14 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { model.controller.notice("Ошибка сохранения HEX: ${e.message}") }
         }
     }
+    private var pendingRangeReport:String?=null
+    private val saveRangeLog=registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri->
+        val id=pendingRangeReport;pendingRangeReport=null
+        if(uri!=null && id!=null)lifecycleScope.launch{
+            try{withContext(Dispatchers.IO){contentResolver.openOutputStream(uri,"wt")?.use{model.controller.writeRangeReport(id,it)} ?: error("Файл недоступен")};model.controller.notice("Операция сохранена в TXT")}
+            catch(e:Exception){model.controller.notice("Ошибка TXT: ${e.message}")}
+        }
+    }
     private data class ExportRequest(val ids: List<String>, val format: ExportFormat, val separator: Char)
     private var pendingExport: ExportRequest? = null
     private var pendingWalkFile: File? = null
@@ -118,6 +126,7 @@ class MainActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         pendingExport?.let { outState.putStringArrayList("exportIds", ArrayList(it.ids)); outState.putString("exportFormat", it.format.name); outState.putInt("exportSeparator", it.separator.code) }
         pendingWalkFile?.let { outState.putString("walkExportFile",it.name) }
+        pendingRangeReport?.let{outState.putString("rangeReportId",it)}
         super.onSaveInstanceState(outState)
     }
     private fun shareHex() { lifecycleScope.launch {
@@ -132,6 +141,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
         savedInstanceState?.let { saved ->
             saved.getString("walkExportFile")?.takeIf { it==File(it).name && it.startsWith("hart-walk-") && it.endsWith(".xlsx") }?.let { pendingWalkFile=File(cacheDir,"report-exports/$it").takeIf(File::isFile) }
+            pendingRangeReport=saved.getString("rangeReportId")
             val ids = saved.getStringArrayList("exportIds") ?: saved.getString("exportId")?.let { arrayListOf(it) }
             if (ids != null) pendingExport = ExportRequest(ids, saved.getString("exportFormat")?.let(ExportFormat::valueOf) ?: if (saved.getBoolean("exportPdf")) ExportFormat.PDF else ExportFormat.CSV, saved.getInt("exportSeparator", 59).toChar())
         }
@@ -152,7 +162,7 @@ class MainActivity : ComponentActivity() {
                         } catch (e: CancellationException) { throw e
                         } catch (e: Exception) { model.controller.notice("Буфер обмена недоступен: ${e.message}. Сохраните TXT.") }
                     } },
-                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex, export = ::export,exportWalk=::exportWalk)
+                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex, export = ::export,exportWalk=::exportWalk,exportRange={id->pendingRangeReport=id;saveRangeLog.launch("hart-range-$id.txt")})
             }
         }
     }
@@ -165,7 +175,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun HartApp(state: SessionState, c: SessionController, permission: () -> Unit, enableBluetooth: () -> Unit,
-                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit, exportWalk:(WalkBook,Boolean)->Unit) {
+                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit, exportWalk:(WalkBook,Boolean)->Unit,exportRange:(String)->Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showOther by rememberSaveable { mutableStateOf(false) }
     var endPrompt by remember { mutableStateOf(false) }
@@ -180,12 +190,15 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         else { c.requestWalk();if(!state.active) tab=0 }
     }
     val scroll = remember(tab, archiveId) { ScrollState(0) }
-    BackHandler(enabled = tab == 2 && archiveId != null) { archiveId = null }
+    BackHandler(enabled = !state.rangeVisible && tab == 2 && archiveId != null) { archiveId = null }
+    BackHandler(state.rangeVisible){c.closeRange()}
     val monitor = state.monitor
-    val decision = monitor.startedAt != null && monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE)
+    val decision = !state.rangeVisible && monitor.startedAt != null && monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE)
     Scaffold(topBar = { TopAppBar(title = { Text("HART-бро ${BuildConfig.VERSION_NAME}") },
-        navigationIcon = { if (tab == 2 && archiveId != null) TextButton(onClick = { archiveId = null }, modifier = Modifier.testTag("archiveBack")) { Text("К списку") } }) },
+        navigationIcon = { if(state.rangeVisible)TextButton(onClick=c::closeRange,modifier=Modifier.testTag("rangeBack")){Text("К прибору")}
+            else if (tab == 2 && archiveId != null) TextButton(onClick = { archiveId = null }, modifier = Modifier.testTag("archiveBack")) { Text("К списку") } }) },
         bottomBar = {
+            if(!state.rangeVisible) {
             if(state.walkActive || tab==4 && state.walk.book?.let { it.endedAt==null }==true) Surface(tonalElevation=3.dp) {
                 FlowRow(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=12.dp,vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     Button(onClick=c::saveWalk,enabled=state.walk.book?.rows?.isNotEmpty()==true,modifier=Modifier.testTag("saveWalk")){Text("Сохранить обход")}
@@ -202,14 +215,20 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                     }
                 }
             }
+            }
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if(state.rangeVisible) {
+                Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){RangeScreen(state,c,exportRange)}
+            } else {
             PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                 listOf("Связь", "Монитор", "Журнал", "HEX", "Обход").forEachIndexed { i, text -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(text, maxLines = 1) }) }
             }
             Column(Modifier.fillMaxSize().testTag(if (tab == 2 && archiveId != null) "archiveScroll" else "sectionScroll").verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if(state.walkActive) state.walk.message else monitor.message, style = MaterialTheme.typography.titleMedium)
                 state.notice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                if(state.range.busy)TextButton(onClick=c::showRangeResult){Text("Настройка диапазона: ${state.range.message}")}
+                if(state.rangeRecords.any{it.outcome==RangeOutcome.UNKNOWN || it.outcome==RangeOutcome.PENDING})TextButton(onClick=c::showRangeHistory){Text("Есть неподтверждённые операции диапазона — проверить чтением")}
                 if (state.diagnosticIncomplete) Text("HEX-журнал неполон: достигнут предел. Сохраните доступный TXT и очистите буфер.", color = MaterialTheme.colorScheme.error)
                 if (monitor.phase == MonitorPhase.CONNECTING) LinearProgressIndicator(Modifier.fillMaxWidth())
                 monitor.recovery?.let { RecoveryPanel(it) }
@@ -217,8 +236,9 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                     0 -> {
                         Text("Подключение для: ${if(state.requestedMode==ConnectionMode.WALK) "обхода датчиков" else "мониторинга"}")
                         if(!state.active) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { ConnectionMode.entries.forEach { mode -> FilterChip(state.requestedMode==mode,{c.chooseMode(mode)},label={Text(if(mode==ConnectionMode.WALK) "Обход датчиков" else "Мониторинг")}) } }
+                        TextButton(onClick=c::showRangeHistory){Text("История настройки диапазона")}
                         Text("Bluetooth VIATOR", style = MaterialTheme.typography.titleLarge)
-                        Text("Мониторинг цифровых HART-данных. Только чтение; давление и температура не вычисляются из 4–20 мА.")
+                        Text("Цифровые HART-данные; настройка диапазона — по отдельному подтверждению. Давление и температура не вычисляются из 4–20 мА.")
                         when {
                             !state.permissionGranted -> Button(onClick = permission) { Text("Разрешить Bluetooth") }
                             !state.bluetoothAvailable -> Text("Bluetooth недоступен")
@@ -251,6 +271,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         }
                         TextButton(onClick = { technical = !technical }) { Text(if (technical) "Скрыть сведения" else "Сведения о приборе и справка") }
                         monitor.identity?.let { d ->
+                            if(monitor.bluetoothConnected && monitor.phase in setOf(MonitorPhase.READY,MonitorPhase.MONITORING,MonitorPhase.PAUSED))Button(onClick={c.openRange()},enabled=!state.rangeOwned,modifier=Modifier.testTag("openRange")){Text("Настроить диапазон")}
                             Text("${d.manufacturerDescription} · ID ${d.uniqueKey}")
                             if (technical) Text("HART ${d.hartRevision}; ПО ${d.softwareRevision}; ревизия устройства ${d.deviceRevision}. График использует реальные значения, независимые шкалы несовместимых единиц и разрывы при пропусках. Нажмите обозначение серии для её выделения.")
                         }
@@ -301,6 +322,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                     }
                 }
             }
+            }
         }
     }
     state.pendingConnection?.let { d -> AlertDialog(onDismissRequest = c::cancelConnectionPrompt,
@@ -311,14 +333,20 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         text = { Text(if (decision) monitor.message else "Сохранить текущий снимок или удалить временную историю? Ранее сохранённые снимки останутся в журнале.") },
         confirmButton = { TextButton(onClick = { c.save(finish = true); endPrompt = false }, enabled = !state.saving && monitor.identity != null) { Text("Сохранить сессию") } },
         dismissButton = { TextButton(onClick = { c.end(); endPrompt = false }, enabled = !state.saving) { Text("Завершить без сохранения") } })
-    if(switchToWalk) AlertDialog(onDismissRequest={switchToWalk=false},title={Text("Перейти к обходу датчиков?")},
-        text={Text("Текущая измерительная сессия будет завершена. Сохранить её перед переключением?")},
-        confirmButton={TextButton(onClick={c.requestWalk(saveSession=true);switchToWalk=false;tab=4}){Text("Сохранить и перейти")}},
-        dismissButton={Column { TextButton(onClick={c.requestWalk(saveSession=false);switchToWalk=false;tab=4}){Text("Завершить без сохранения")};TextButton(onClick={switchToWalk=false}){Text("Отмена")}}})
-    if(walkEnd) AlertDialog(onDismissRequest={walkEnd=false},title={Text("Завершить обход?")},
-        text={Text("Сохранить ведомость в журнале обходов или удалить временный черновик? Ранее сохранённые ведомости останутся. Bluetooth будет освобождён.")},
-        confirmButton={TextButton(onClick={c.finishWalk(true,monitorAfterWalk);walkEnd=false;if(monitorAfterWalk) tab=1}){Text("Сохранить и завершить")}},
-        dismissButton={Column { TextButton(onClick={c.finishWalk(false,monitorAfterWalk);walkEnd=false;if(monitorAfterWalk)tab=1}){Text("Завершить без сохранения")};TextButton(onClick={walkEnd=false}){Text("Отмена")}}})
+    if(switchToWalk) ActionDialog("Перейти к обходу датчиков?",{switchToWalk=false},"switchWalkDialog",content={
+        Text("Текущая измерительная сессия будет завершена. Сохранить её перед переключением?")
+    },actions={
+        Button(onClick={c.requestWalk(saveSession=true);switchToWalk=false;tab=4},modifier=Modifier.fillMaxWidth()){Text("Сохранить и перейти")}
+        OutlinedButton(onClick={c.requestWalk(saveSession=false);switchToWalk=false;tab=4},modifier=Modifier.fillMaxWidth()){Text("Завершить без сохранения")}
+        TextButton(onClick={switchToWalk=false},modifier=Modifier.fillMaxWidth()){Text("Отмена")}
+    })
+    if(walkEnd) ActionDialog("Завершить обход?",{walkEnd=false},"walkEndDialog",content={
+        Text("Сохранить текущую ведомость или завершить обход без сохранения.")
+    },actions={
+        Button(onClick={c.finishWalk(true,monitorAfterWalk);walkEnd=false;if(monitorAfterWalk)tab=1},modifier=Modifier.fillMaxWidth().testTag("walkEndSave")){Text("Сохранить и завершить")}
+        OutlinedButton(onClick={c.finishWalk(false,monitorAfterWalk);walkEnd=false;if(monitorAfterWalk)tab=1},modifier=Modifier.fillMaxWidth().testTag("walkEndDiscard")){Text("Завершить без сохранения")}
+        TextButton(onClick={walkEnd=false},modifier=Modifier.fillMaxWidth().testTag("walkEndCancel")){Text("Отмена")}
+    })
     if (clearHexPrompt) AlertDialog(onDismissRequest = { clearHexPrompt = false }, title = { Text("Очистить временный HEX-журнал?") },
         text = { Text("Сначала сохраните нужные данные в TXT. Сохранённые вами файлы не удаляются.") },
         confirmButton = { TextButton(onClick = { c.clearDiagnostics(); clearHexPrompt = false }) { Text("Очистить") } },

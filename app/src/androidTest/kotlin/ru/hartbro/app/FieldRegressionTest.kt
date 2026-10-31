@@ -28,6 +28,12 @@ import ru.hartbro.core.*
 /** Instrumentation-only transport; never packaged in the production APK. */
 class FieldRegressionApplication : HartApplication() {
     val walkPassportReads=AtomicInteger(); val walkBluetoothFailures=AtomicInteger(); val samples = AtomicInteger(); val connections = AtomicInteger(); val hartFailures = AtomicInteger(); val bluetoothFailures = AtomicInteger()
+    val rangeWrites=AtomicInteger()
+    @Volatile var rangeActual=ConfiguredRange(0f,40f,12)
+    @Volatile var rangeMode=0
+    @Volatile var rangeAckDelay=0L
+    @Volatile var rangeHoldAck=false
+    @Volatile var rangeTimeout=300L
     @Volatile var hartDeviceId = 0x5FCA7F
     @Volatile var identifyDelay = 0L
     @Volatile var failIdentity = false
@@ -35,7 +41,12 @@ class FieldRegressionApplication : HartApplication() {
         connections.incrementAndGet()
         object : MonitorConnection {
             private var open = true
-            override val isOpen get() = open
+            private val rangeWire=RangeTransportFixture(this@FieldRegressionApplication)
+            private val rangeOperations by lazy{RangeOperations(HartClient(rangeWire,controller::append,timeoutMillis=rangeTimeout,readAttempts=1))}
+            override val isOpen get() = open && rangeWire.open
+            override suspend fun rangeSnapshot()=rangeOperations.prepare()
+            override suspend fun applyRange(prepared:RangeSnapshot,requested:ConfiguredRange,beforeSend:(ByteArray)->Unit,onReply:(HartExchange)->Unit,onInvalidRx:(ByteArray)->Unit)=rangeOperations.apply(prepared,requested,beforeSend,onReply,onInvalidRx)
+            override suspend fun verifyRange(expected:DeviceIdentity)=rangeOperations.verify(expected)
             override suspend fun identify(): DeviceIdentity {
                 delay(identifyDelay)
                 if(walkBluetoothFailures.getAndUpdate { (it-1).coerceAtLeast(0) }>0) throw IOException("Instrumentation: walk RFCOMM lost")
@@ -45,14 +56,14 @@ class FieldRegressionApplication : HartApplication() {
                 return DeviceIdentity.parse(raw)
             }
             override suspend fun passport(identity:DeviceIdentity):PassportReading {
-                walkPassportReads.incrementAndGet();val at=Instant.now();val range=ConfiguredRange(0f,40f,12)
+                walkPassportReads.incrementAndGet();val at=Instant.now();val range=rangeActual
                 return PassportReading(identity,mapOf(PassportField.TAG to PassportFact("TEST-${identity.deviceId}",FactSource.STANDARD_HART,20,"54 45 53 54",at),
                     PassportField.MODEL to PassportFact("ТЕСТ модель",FactSource.STANDARD_HART,0,identity.raw.hex(),at),
                     PassportField.RANGE to PassportFact(range.label,FactSource.STANDARD_HART,15,"00",at)),
                     mapOf("sensorNumber" to PassportFact("1234",FactSource.STANDARD_HART,14,"00 04 D2",at),"assemblyNumber" to PassportFact("5678",FactSource.STANDARD_HART,16,"00 16 2E",at)),range,at)
             }
             override suspend fun configuration() = ConfigurationSnapshot(mapOf("tag" to ConfigValue("TEST-METRAN", 13),
-                "rangeUnit" to ConfigValue("12", 15, 12), "lowerRange" to ConfigValue("0.0", 15, 12), "upperRange" to ConfigValue("40.0", 15, 12)))
+                "rangeUnit" to ConfigValue("12", 15, 12), "lowerRange" to ConfigValue(rangeActual.lower.toString(),15,12),"upperRange" to ConfigValue(rangeActual.upper.toString(),15,12)))
             override suspend fun discover() = sample()
             override suspend fun sample(): MeasurementBatch {
                 if (bluetoothFailures.getAndUpdate { (it - 1).coerceAtLeast(0) } > 0) throw IOException("Instrumentation: RFCOMM lost")
@@ -60,7 +71,7 @@ class FieldRegressionApplication : HartApplication() {
                 samples.incrementAndGet(); val now = Instant.now()
                 return MeasurementBatch(listOf(Measurement("PV", 1.25f, 12, Quality.GOOD, now, 9)), 0, now)
             }
-            override fun close() { open = false }
+            override fun close() { open = false;rangeWire.close() }
         }
     }
 }
@@ -86,7 +97,7 @@ class FieldRegressionTest {
         previousScreenTimeout = device.executeShellCommand("settings get system screen_off_timeout").trim()
         device.executeShellCommand("settings put system screen_off_timeout 1200000")
         device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
-        app.walkBluetoothFailures.set(0); app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
+        app.rangeActual=ConfiguredRange(0f,40f,12);app.rangeMode=0;app.rangeAckDelay=0;app.rangeTimeout=300;app.walkBluetoothFailures.set(0); app.hartDeviceId = 0x5FCA7F; app.identifyDelay = 0; app.failIdentity = false; app.hartFailures.set(0); app.bluetoothFailures.set(0)
         app.controller.deleteMany(app.controller.state.value.archives.map { it.first }.toSet())
         waitFor { app.controller.state.value.archives.isEmpty() }
     }

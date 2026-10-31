@@ -66,6 +66,7 @@ internal fun WalkScreen(state: SessionState,c: SessionController,onStart:()->Uni
             val last=book.rows.find { it.id==state.walk.lastRowId }
             Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                 Text("Последний прочитанный прибор",style=MaterialTheme.typography.titleMedium)
+                if(state.walkActive && state.walk.bluetoothConnected)Button(onClick={c.openRange()},enabled=!state.rangeOwned,modifier=Modifier.testTag("openWalkRange")){Text("Настроить диапазон")}
                 Text(reading.identity.manufacturerDescription)
                 PassportField.entries.forEach { field ->
                     val fact=last?.fields?.get(field) ?: reading.fields[field]

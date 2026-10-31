@@ -32,6 +32,7 @@ data class SessionState(
     val active: Boolean = false, val detailedDiagnostics: Boolean = false,
     val diagnosticIncomplete: Boolean = false, val serviceRunning: Boolean = false,
     val requestedMode: ConnectionMode = ConnectionMode.MONITOR, val walkActive: Boolean = false,
+    val range:RangeState=RangeState(),val rangeVisible:Boolean=false,val rangeOwned:Boolean=false,val rangeRecords:List<RangeRecord> = emptyList(),
     val walk: WalkState = WalkState(), val savedWalks: List<WalkBook> = emptyList(), val walkDraftAvailable: Boolean = false,
 )
 
@@ -50,6 +51,13 @@ class SessionController(private val app: Application, private val connectionFact
     private var walkEngine: WalkEngine? = null
     private var walkObserver: Job? = null
     private var communicator: Communicator? = null
+    val rangeJournal=RangeJournal(File(app.filesDir,"range-operations"))
+    private var rangeEngine:RangeEngine?=null
+    private var rangeObserver:Job?=null
+    private var rangeContext:ConnectionMode?=null
+    private var rangeLeaseActive=false
+    private var rangeToken=""
+    private var rangeRecordLimit=100
     private var reader: MeasurementReader? = null
     @Volatile private var lastTx: Instant? = null
     @Volatile private var lastRx: Instant? = null
@@ -57,7 +65,7 @@ class SessionController(private val app: Application, private val connectionFact
     @Volatile private var socketState = "нет соединения"
     @Volatile private var serviceLease = 0L
     private val adapter get() = app.getSystemService(BluetoothManager::class.java)?.adapter
-    init { history.cleanOrphans(); refreshArchives(); refreshWalks();mutableState.update { it.copy(walkDraftAvailable = walkStore.hasDraft()) } }
+    init { history.cleanOrphans(); scope.launch { runCatching{rangeJournal.recoverInterrupted()}.onFailure{notice("Журнал записей: ${it.message}")};refreshRangeRecords() };refreshArchives(); refreshWalks();mutableState.update { it.copy(walkDraftAvailable = walkStore.hasDraft()) } }
     fun append(entry: DiagnosticEntry) {
         if (entry.kind == "TX-FRAME") lastTx = entry.time
         if (entry.kind == "RX-CHUNK" || entry.kind == "RX-FRAME") lastRx = entry.time
@@ -128,7 +136,7 @@ class SessionController(private val app: Application, private val connectionFact
     fun start(address:String,name:String) { scope.launch { archiveActions.withLock { startMonitoringNow(address,name) } } }
     @SuppressLint("MissingPermission")
     private fun startMonitoringNow(address: String, name: String, initial: MonitorConnection? = null) {
-        if (engine != null || walkEngine != null) { initial?.close();return }
+        if (rangeLeaseActive || engine != null || walkEngine != null) { initial?.close();return }
         communicator = Communicator(name,address,true)
         initial?.prepareMonitoring()
         mutableState.update { it.copy(active = true, notice = null) }
@@ -186,6 +194,9 @@ class SessionController(private val app: Application, private val connectionFact
             override fun prepareMonitoring() { reader=null;readerClient=null;client=HartClient(transport, ::append, readAttempts=1) }
             override fun resetSession() { reader=null;readerClient=null }
             override suspend fun passport(identity: DeviceIdentity) = passportReader.read(identity)
+            override suspend fun rangeSnapshot()=RangeOperations(client).prepare().also{identity=it.identity}
+            override suspend fun applyRange(prepared:RangeSnapshot,requested:ConfiguredRange,beforeSend:(ByteArray)->Unit,onReply:(HartExchange)->Unit,onInvalidRx:(ByteArray)->Unit)=RangeOperations(client).apply(prepared,requested,beforeSend,onReply,onInvalidRx)
+            override suspend fun verifyRange(expected:DeviceIdentity)=RangeOperations(client).verify(expected).also{identity=it.identity}
             override suspend fun configuration() = readConfiguration(client,identity,::event)
             override suspend fun discover(): MeasurementBatch {
                 reader=MeasurementReader(client,identity,::event);readerClient=client;return reader!!.discover()
@@ -201,15 +212,15 @@ class SessionController(private val app: Application, private val connectionFact
     }
     // Tracks reader ownership, never shared concurrently: the engine is the sole connection owner.
     private var readerClient: HartClient? = null
-    fun beginSession() { scope.launch { archiveActions.withLock { if (state.value.walkActive) { notice("Сначала завершите обход");return@withLock };engine?.startSession() ?: notice("Сначала подключите коммуникатор на вкладке «Связь»") } } }
-    fun pause(value: Boolean) { scope.launch { engine?.pause(value) } }
+    fun beginSession() { scope.launch { archiveActions.withLock { if (rangeLeaseActive || state.value.walkActive) { notice("Сначала завершите настройку или обход");return@withLock };engine?.startSession() ?: notice("Сначала подключите коммуникатор на вкладке «Связь»") } } }
+    fun pause(value: Boolean) { scope.launch { archiveActions.withLock { if(!rangeLeaseActive)engine?.pause(value) } } }
     fun period(millis: Long) { engine?.setPeriod(millis) }
     fun save(finish: Boolean = false) {
         if (state.value.saving) return
         mutableState.update { it.copy(saving = true) }
         scope.launch {
           archiveActions.withLock {
-            if(state.value.walkActive) { mutableState.update { it.copy(saving=false) };return@withLock }
+            if(state.value.walkActive || finish && rangeLeaseActive) { mutableState.update { it.copy(saving=false) };return@withLock }
             try {
                 val id = history.snapshot()
                 runCatching { history.event(Instant.now(), "Снимок сохранён: $id") }
@@ -222,7 +233,7 @@ class SessionController(private val app: Application, private val connectionFact
           }
         }
     }
-    fun end() { if (!state.value.saving) scope.launch { archiveActions.withLock { if(!state.value.walkActive) endNow() } } }
+    fun end() { if (!state.value.saving) scope.launch { archiveActions.withLock { if(!state.value.walkActive && !rangeLeaseActive) endNow() } } }
     private suspend fun endNow(reason: String = "Завершение пользователем", switching: Boolean = false) {
         event("Остановка сессии: $reason")
         engine?.finishSession()
@@ -232,7 +243,7 @@ class SessionController(private val app: Application, private val connectionFact
         if (!switching && engine?.state?.value?.bluetoothConnected != true) disconnectNow()
     }
     fun disconnect() { scope.launch { archiveActions.withLock {
-        if (state.value.walkActive || state.value.monitor.startedAt != null) { notice("Сначала сохраните или завершите сессию / обход"); return@withLock }
+        if (rangeLeaseActive || state.value.walkActive || state.value.monitor.startedAt != null) { notice("Сначала сохраните или завершите сессию / обход"); return@withLock }
         disconnectNow()
     } } }
     private suspend fun disconnectNow() {
@@ -243,6 +254,12 @@ class SessionController(private val app: Application, private val connectionFact
     fun serviceDestroyed(lease: Long) { scope.launch { archiveActions.withLock {
         if (lease != serviceLease) { serviceLifecycle("Устаревший onDestroy lease=$lease; текущий=$serviceLease; сессия сохранена"); return@withLock }
         serviceLifecycle("onDestroy; lease=$lease", false)
+        if(rangeLeaseActive) {
+            rangeEngine?.stop();rangeObserver?.cancelAndJoin();rangeObserver=null
+            releaseRangeLease(null,rangeEngine?.connection,false,"Служба остановлена во время настройки; требуется проверочное чтение")
+            rangeToken="";refreshRangeRecords()
+            mutableState.update{it.copy(rangeOwned=false,range=rangeEngine?.state?.value ?: RangeState())}
+        }
         if (state.value.walkActive) {
             walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
             mutableState.update { it.copy(active=false,walkActive=false,walkDraftAvailable=walkStore.hasDraft(),walk=it.walk.copy(phase=WalkPhase.INTERRUPTED,bluetoothConnected=false,recovery=null,message="Служба остановлена. Ведомость сохранена в черновике; продолжение — по вашему решению.")) }
@@ -254,8 +271,72 @@ class SessionController(private val app: Application, private val connectionFact
                 bluetoothConnected = false, latest = null, recovery = null, message = if (previous.startedAt != null) "Служба остановлена. Временная история сохранена до вашего решения" else "Служба остановлена. Подключите коммуникатор повторно")) }
         }
     } } }
+    fun showRangeHistory(){mutableState.update{it.copy(rangeVisible=true)};refreshRangeRecords()}
+    fun showRangeResult(){mutableState.update{it.copy(rangeVisible=true)}}
+    fun openRange(recordId:String?=null,acceptCurrentDevice:Boolean=false) { scope.launch { archiveActions.withLock {
+        if(rangeEngine?.state?.value?.busy==true) { showRangeResult();return@withLock }
+        try {
+            if(rangeLeaseActive) {
+                val old=rangeEngine?.state?.value
+                rangeEngine?.stop()
+                releaseRangeLease(old?.verification ?: old?.snapshot?.let{RangeVerification(it.identity,it.configuration)},rangeEngine?.connection,old?.record?.outcome !in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE),"Возврат от предыдущей настройки")
+            }
+            rangeObserver?.cancelAndJoin();rangeObserver=null
+            val selected=communicator ?: run {notice("Сначала подключите и идентифицируйте VIATOR");return@withLock}
+            val record=recordId?.let(rangeJournal::load)
+            val initial=when {
+                state.value.walkActive && walkEngine!=null -> {rangeContext=ConnectionMode.WALK;walkEngine!!.acquireConfiguration()}
+                engine!=null -> {rangeContext=ConnectionMode.MONITOR;engine!!.acquireConfiguration()}
+                else -> {notice("Сначала подключите и идентифицируйте прибор");return@withLock}
+            }
+            rangeLeaseActive=true;rangeToken=java.util.UUID.randomUUID().toString();val token=rangeToken
+            val expected=record?.identity ?: if(acceptCurrentDevice)null else if(rangeContext==ConnectionMode.MONITOR)state.value.monitor.identity else state.value.walk.lastReading?.identity
+            val worker=RangeEngine(scope,initial,{createConnection(selected.address)},rangeJournal,expected,finished={r,v,connection,resume ->
+                scope.launch { archiveActions.withLock {
+                    if(token!=rangeToken || !rangeLeaseActive)return@withLock
+                    releaseRangeLease(v,connection,resume, r?.let{RangeEngine.resultText(it)+"; ${it.original.label} → ${it.actual?.label ?: "не подтверждено"}; запрошено ${it.requested.label}"} ?: "Настройка завершена")
+                    refreshRangeRecords()
+                } }
+            })
+            rangeEngine=worker
+            mutableState.update{it.copy(rangeOwned=true,rangeVisible=true,notice=null)}
+            rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r)}}}
+            if(record==null) worker.open() else worker.verifyOnly(record)
+        } catch(e:Exception) {
+            if(rangeLeaseActive)releaseRangeLease(null,rangeEngine?.connection,false,"Настройка не открыта: ${e.message}")
+            notice("Настройка диапазона: ${e.message}")
+        }
+    } } }
+    private fun releaseRangeLease(verification:RangeVerification?,connection:MonitorConnection?,resume:Boolean,message:String) {
+        if(!rangeLeaseActive)return
+        val canResume=resume && connection?.isOpen==true
+        try {
+            if(rangeContext==ConnectionMode.MONITOR)engine?.releaseConfiguration(connection,verification,canResume,message,rangeEngine?.state?.value?.otherDevice!=null)
+            else walkEngine?.releaseConfiguration(connection,canResume,message)
+        } catch(e:Exception) {notice("Ошибка сохранения события настройки: ${e.message}. История остаётся приостановленной.")}
+        finally {rangeLeaseActive=false;mutableState.update{it.copy(rangeOwned=false)}}
+    }
+    fun closeRange(){
+        mutableState.update{it.copy(rangeVisible=false)}
+        if(rangeEngine?.state?.value?.busy==true && rangeEngine?.cancelBeforeSend()!=true)return // Sent operations continue verification.
+        scope.launch {archiveActions.withLock {
+            if(rangeLeaseActive) {
+                val r=rangeEngine?.state?.value
+                rangeEngine?.stop(closeConnection=false)
+                val verification=r?.verification ?: r?.snapshot?.let{RangeVerification(it.identity,it.configuration)}
+                releaseRangeLease(verification,rangeEngine?.connection,r?.otherDevice==null && r?.record?.outcome !in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE),"Возврат от настройки диапазона без повторной записи")
+            }
+        }}
+    }
+    fun selectRange(lower:String,upper:String){rangeEngine?.select(lower,upper)}
+    fun cancelRangeConfirmation(){rangeEngine?.cancelConfirmation()}
+    fun confirmRange(token:String){if(rangeLeaseActive)rangeEngine?.confirm(token)}
+    fun moreRangeRecords(){rangeRecordLimit+=100;refreshRangeRecords()}
+    fun refreshRangeRecords(){scope.launch{runCatching{rangeJournal.list(rangeRecordLimit)}.onSuccess{records->mutableState.update{it.copy(rangeRecords=records)}}.onFailure{notice("Журнал записей: ${it.message}")}}}
+    fun writeRangeReport(id:String,output:OutputStream){val record=rangeEngine?.state?.value?.record?.takeIf{it.id==id} ?: rangeJournal.load(id);output.write(record.text().toByteArray(Charsets.UTF_8))}
     fun chooseMode(mode: ConnectionMode) { mutableState.update { it.copy(requestedMode=mode) } }
     fun requestWalk(saveSession: Boolean? = null) { scope.launch { archiveActions.withLock {
+        if (rangeLeaseActive) { notice("Настройка диапазона ещё не завершена");return@withLock }
         if (state.value.walkActive) return@withLock
         if(state.value.walkDraftAvailable && state.value.walk.book==null) { notice("Сначала восстановите или удалите черновик на вкладке «Обход»");return@withLock }
         if (state.value.monitor.startedAt != null) {
@@ -272,7 +353,7 @@ class SessionController(private val app: Application, private val connectionFact
         startWalkNow(selected,initial)
     } } }
     fun startWalkConnection(address:String,name:String) { scope.launch { archiveActions.withLock {
-        if (engine!=null || walkEngine!=null) return@withLock
+        if (rangeLeaseActive || engine!=null || walkEngine!=null) return@withLock
         if(state.value.walkDraftAvailable && state.value.walk.book==null) { notice("Сначала восстановите или удалите черновик на вкладке «Обход»");app.stopService(Intent(app,MonitoringService::class.java));return@withLock }
         if (walkCatalog.snapshot().endedAt != null) walkCatalog=WalkCatalog()
         startWalkNow(Communicator(name,address,true))
@@ -288,7 +369,7 @@ class SessionController(private val app: Application, private val connectionFact
         worker.start(initial)
     }
     fun retryWalk() { scope.launch { archiveActions.withLock {
-        if(!state.value.walkActive || walkEngine==null || engine!=null || state.value.walk.phase!=WalkPhase.DECISION) return@withLock
+        if(rangeLeaseActive || !state.value.walkActive || walkEngine==null || engine!=null || state.value.walk.phase!=WalkPhase.DECISION) return@withLock
         val selected=communicator ?: return@withLock
         walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
         startWalkNow(selected)
@@ -311,7 +392,7 @@ class SessionController(private val app: Application, private val connectionFact
     } } }
     fun finishWalk(save:Boolean,monitorNext:Boolean=false) { scope.launch { archiveActions.withLock {
         // Ignore stale/double UI actions after ownership has already moved to ordinary monitoring.
-        if(engine!=null || !state.value.walkActive && walkCatalog.snapshot().endedAt!=null) return@withLock
+        if(rangeLeaseActive || engine!=null || !state.value.walkActive && walkCatalog.snapshot().endedAt!=null) return@withLock
         walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
         val finishedAt=Instant.now()
         if(save) try { walkStore.save(walkCatalog.snapshot().copy(endedAt=finishedAt)) } catch(e:Exception) {

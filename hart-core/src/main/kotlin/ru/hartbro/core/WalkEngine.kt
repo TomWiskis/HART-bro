@@ -6,6 +6,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class WalkPhase { STOPPED, CONNECTING, WAITING, IDENTIFYING, READING, RECEIVED, RECOVERING, DECISION, INTERRUPTED }
 data class WalkState(val phase: WalkPhase = WalkPhase.STOPPED, val bluetoothConnected: Boolean = false,
@@ -20,6 +22,9 @@ class WalkEngine(private val scope: CoroutineScope, private val connect: suspend
     val state = mutable.asStateFlow()
     @Volatile private var connection: MonitorConnection? = null
     private var job: Job? = null
+    private val ioGate=Mutex()
+    @Volatile private var configuring=false
+    @Volatile private var configurationPaused=false
     @Volatile private var forced = false
     private var currentKey: String? = null
     private var pendingId: String? = null
@@ -37,6 +42,9 @@ class WalkEngine(private val scope: CoroutineScope, private val connect: suspend
                 publish(WalkPhase.WAITING, "Ожидание следующего датчика")
                 var missing = 0
                 while (isActive) {
+                    if(configurationPaused) { delay(100);continue }
+                    ioGate.withLock {
+                    if(configuring) return@withLock
                     try {
                         publish(WalkPhase.IDENTIFYING, "Идентификация HART…")
                         val identity = connection!!.identify();val key = passportKey(identity)
@@ -71,6 +79,7 @@ class WalkEngine(private val scope: CoroutineScope, private val connect: suspend
                         diagnostic("HART: ожидание датчика; ${e.message}")
                         if (connection?.isOpen != true) { close();if (!recover()) return@launch }
                         else publish(WalkPhase.WAITING, "Ожидание следующего датчика")
+                    }
                     }
                     delay(state.value.intervalMillis)
                 }
@@ -110,6 +119,19 @@ class WalkEngine(private val scope: CoroutineScope, private val connect: suspend
             currentCoroutineContext().ensureActive();close();publish(WalkPhase.DECISION, "Bluetooth не восстановлен за 60 секунд. Можно подключиться повторно или завершить обход.")
             return false
         }
+    }
+    suspend fun acquireConfiguration():MonitorConnection? {
+        check(!configuring && state.value.phase !in setOf(WalkPhase.CONNECTING,WalkPhase.RECOVERING,WalkPhase.STOPPED)) { "Дождитесь завершения подключения" }
+        configuring=true
+        try { ioGate.lock() } catch(e:Throwable) { configuring=false;throw e }
+        publish(WalkPhase.INTERRUPTED,"Опрос приостановлен для настройки диапазона")
+        return connection
+    }
+    fun releaseConfiguration(replacement:MonitorConnection?,resume:Boolean,message:String) {
+        check(configuring);connection=replacement;currentKey=null;pendingId=null;confirmedRowForPresence=null
+        configurationPaused=!resume
+        publish(if(resume)WalkPhase.WAITING else WalkPhase.INTERRUPTED,message)
+        configuring=false;ioGate.unlock()
     }
     fun setInterval(millis: Long) { require(millis in listOf(500L, 1000L, 2000L));mutable.update { it.copy(intervalMillis = millis) } }
     fun repeatCurrent() { forced = true }

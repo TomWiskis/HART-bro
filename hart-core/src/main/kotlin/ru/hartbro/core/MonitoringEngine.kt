@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 interface MonitorConnection : AutoCloseable {
     suspend fun identify(): DeviceIdentity
@@ -14,6 +16,9 @@ interface MonitorConnection : AutoCloseable {
     suspend fun sample(): MeasurementBatch
     suspend fun configuration(): ConfigurationSnapshot = ConfigurationSnapshot()
     suspend fun passport(identity: DeviceIdentity): PassportReading = PassportReading(identity, emptyMap(), emptyMap(), null, java.time.Instant.now(), mapOf("connection" to "Паспортное чтение недоступно"))
+    suspend fun rangeSnapshot():RangeSnapshot = throw UnsupportedOperationException("Настройка диапазона недоступна")
+    suspend fun applyRange(prepared:RangeSnapshot,requested:ConfiguredRange,beforeSend:(ByteArray)->Unit,onReply:(HartExchange)->Unit,onInvalidRx:(ByteArray)->Unit = {}):RangeAttempt = throw UnsupportedOperationException("Настройка диапазона недоступна")
+    suspend fun verifyRange(expected:DeviceIdentity):RangeVerification = throw UnsupportedOperationException("Проверка диапазона недоступна")
     fun prepareWalk() {}
     fun prepareMonitoring() {}
     fun resetSession() {}
@@ -52,6 +57,10 @@ class MonitoringEngine(
     private var job: Job? = null
     private val sessionStarts = Channel<Unit>(Channel.CONFLATED)
     private val controls = Any()
+    private val ioGate=Mutex()
+    @Volatile private var configuring=false
+    private var wasPaused=false
+    private var resumeBlockedByConfiguration=false
     @Volatile private var connection: MonitorConnection? = null
     @Volatile private var paused = false
     @Volatile private var startingSession = false
@@ -61,7 +70,7 @@ class MonitoringEngine(
             recovery = if (phase == MonitorPhase.RECOVERING) it.recovery else null) }
     }
     fun startSession() = synchronized(controls) {
-        if (state.value.phase != MonitorPhase.READY || startingSession) return@synchronized
+        if (state.value.phase != MonitorPhase.READY || startingSession || configuring) return@synchronized
         startingSession=true
         if (job == null) start() else sessionStarts.trySend(Unit)
     }
@@ -71,17 +80,18 @@ class MonitoringEngine(
         job = scope.launch {
             try {
                 publish(MonitorPhase.CONNECTING, "Подключение Bluetooth и идентификация HART…")
-                if (connection == null || connection?.isOpen != true) connection = connect()
-                var identity = connection!!.identify()
-                var config = connection!!.configuration()
+                var (identity,config)=ioGate.withLock {
+                    if (connection == null || connection?.isOpen != true) connection = connect()
+                    connection!!.identify() to connection!!.configuration()
+                }
                 mutableState.update { it.copy(identity = identity, configuration = config) }
                 if (!automaticSession) {
                     publish(MonitorPhase.READY, "Прибор определён. Можно начать сессию")
                     sessionStarts.receive()
                     publish(MonitorPhase.CONNECTING, "Проверка прибора перед новой сессией…")
-                    identity = connection!!.identify()
-                    config = connection!!.configuration()
+                    ioGate.withLock { identity = connection!!.identify();config = connection!!.configuration() }
                 }
+                ioGate.withLock {
                 connection!!.resetSession()
                 sink.configuration(config)
                 val now = wallTime()
@@ -101,10 +111,13 @@ class MonitoringEngine(
                     if (e is IOException) closeConnection()
                     if (!recover(identity, if (e is IOException) LossReason.BLUETOOTH else LossReason.HART)) return@launch
                 }
+                }
                 var errors = 0
                 while (isActive) {
                     if (paused) { delay(100); continue }
                     val start = monotonicMillis()
+                    ioGate.withLock {
+                    if(configuring) return@withLock
                     try {
                         val batch = connection!!.sample()
                         synchronized(controls) {
@@ -120,11 +133,12 @@ class MonitoringEngine(
                         sink.gap(wallTime(), "Ошибка обмена: ${e.message}")
                         publish(if (paused) MonitorPhase.PAUSED else MonitorPhase.MONITORING, "Нет текущих данных: ${e.message}")
                         errors++
-                        if (e is IOException || errors >= 3) {
+                        if (!configuring && (e is IOException || errors >= 3)) {
                             if (e is IOException) closeConnection()
                             if (!recover(identity, if (e is IOException) LossReason.BLUETOOTH else LossReason.HART)) return@launch
                             errors = 0
                         }
+                    }
                     }
                     // Interval is start-to-start, with no catch-up; cancellation remains cooperative.
                     delay(maxOf(1, state.value.periodMillis - (monotonicMillis() - start)))
@@ -216,6 +230,36 @@ class MonitoringEngine(
             return
         }
         publish(if (value) MonitorPhase.PAUSED else MonitorPhase.MONITORING, if (value) "Опрос приостановлен" else "Опрос возобновлён")
+    }
+    suspend fun acquireConfiguration():MonitorConnection? {
+        check(!configuring && !startingSession && state.value.identity!=null) { "Дождитесь идентификации и завершения текущей операции" }
+        configuring=true
+        try { ioGate.lock() } catch(e:Throwable) { configuring=false;throw e }
+        try {
+        if(!resumeBlockedByConfiguration)wasPaused=paused
+        paused=true
+        if(state.value.startedAt!=null) sink.gap(wallTime(),"Опрос приостановлен для настройки диапазона")
+        publish(if(state.value.startedAt!=null) MonitorPhase.PAUSED else MonitorPhase.READY,"Настройка диапазона; опрос приостановлен")
+        } catch(e:Exception) {
+            configuring=false;ioGate.unlock();publish(MonitorPhase.DECISION,"Ошибка временной истории: ${e.message}");throw e
+        }
+        return connection
+    }
+    fun releaseConfiguration(replacement:MonitorConnection?,verification:RangeVerification?,resume:Boolean,message:String,differentDevice:Boolean=false) {
+        check(configuring)
+        try {
+        connection=replacement
+        val same=!differentDevice && (verification?.identity?.let { passportKey(it)==state.value.identity?.let(::passportKey) } ?: true)
+        if(verification!=null && same) {
+            val current=state.value.configuration
+            val updated=current.copy(parameters=current.parameters+verification.configuration.parameters,responses=current.responses.filterNot{it.command==15}+verification.configuration.responses)
+            mutableState.update { it.copy(configuration=updated) };sink.configuration(updated)
+        }
+        if(state.value.startedAt!=null) sink.event(wallTime(),message)
+        paused=wasPaused || !resume || !same
+        publish(when { !same->MonitorPhase.DIFFERENT_DEVICE;!resume->MonitorPhase.DECISION;state.value.startedAt==null->MonitorPhase.READY;paused->MonitorPhase.PAUSED;else->MonitorPhase.MONITORING },message)
+        resumeBlockedByConfiguration=!resume || !same
+        } finally { configuring=false;ioGate.unlock() }
     }
     suspend fun detachReadyConnection(): MonitorConnection? {
         check(state.value.startedAt == null && !startingSession) { "Сессия запускается или уже начата. Дождитесь её начала и завершите перед переходом в обход." }

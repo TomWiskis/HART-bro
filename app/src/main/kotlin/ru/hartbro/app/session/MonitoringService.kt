@@ -38,6 +38,7 @@ class MonitoringService : Service() {
         scope.launch {
             // Diagnostics no longer cause dozens of synchronous notification updates per reply.
             controller.state.map { state ->
+                if(state.rangeOwned) return@map "Настройка диапазона · ${state.range.message}"
                 if (state.walkActive) {
                     val w=state.walk;val r=w.recovery
                     return@map "Обход · ${w.book?.rows?.size ?: 0} приборов · ${if(r!=null) "Bluetooth: осталось ${(r.remainingMillis+999)/1000} с; попытка ${r.attempt}" else w.message}"
@@ -61,7 +62,7 @@ class MonitoringService : Service() {
             var renewed = 0L
             while (isActive) {
                 val state = controller.state.value
-                val working = awaitingStart || state.walkActive && state.walk.phase !in setOf(WalkPhase.DECISION,WalkPhase.STOPPED,WalkPhase.INTERRUPTED) || state.active && !state.walkActive && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR)
+                val working = awaitingStart || state.rangeOwned && state.range.busy || !state.rangeOwned && (state.walkActive && state.walk.phase !in setOf(WalkPhase.DECISION,WalkPhase.STOPPED,WalkPhase.INTERRUPTED) || state.active && !state.walkActive && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR))
                 if (working && (wakeLock?.isHeld != true || SystemClock.elapsedRealtime() - renewed >= 300_000)) {
                     wakeLock?.acquire(600_000); renewed = SystemClock.elapsedRealtime()
                 } else if (!working && wakeLock?.isHeld == true) wakeLock?.release()
@@ -89,7 +90,7 @@ class MonitoringService : Service() {
         val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val open = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, "monitor").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle(if(controller.state.value.walkActive) "HART-бро · обход датчиков" else "HART-бро · мониторинг").setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentTitle(if(controller.state.value.rangeOwned) "HART-бро · настройка диапазона" else if(controller.state.value.walkActive) "HART-бро · обход датчиков" else "HART-бро · мониторинг").setContentText(text).setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, "Открыть сессию", open).build()).build()
     }

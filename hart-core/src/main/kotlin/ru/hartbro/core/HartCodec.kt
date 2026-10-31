@@ -1,6 +1,6 @@
 package ru.hartbro.core
 
-/** No Android or modem-specific dependencies. Only safe read requests are generated. */
+/** No Android or modem-specific dependencies. Reads and the single typed write are separate. */
 sealed class HartAddress(val bytes: ByteArray) {
     class Short(pollingAddress: Int, primaryMaster: Boolean = true) : HartAddress(
         byteArrayOf((pollingAddress.also { require(it in 0..63) } or if (primaryMaster) 0x80 else 0).toByte()),
@@ -53,6 +53,13 @@ object HartCodec {
         val body = byteArrayOf(if (address is HartAddress.Long) 0x82.toByte() else 0x02) +
             address.bytes + byteArrayOf(command.number.toByte(), data.size.toByte()) + data
         return ByteArray(preambles) { 0xFF.toByte() } + body + checksum(body)
+    }
+
+    fun writeRange(address:HartAddress.Long,command:WriteRange,preambles:Int=20):ByteArray {
+        require(preambles in 5..255)
+        val data=command.bytes()
+        val body=byteArrayOf(0x82.toByte())+address.bytes+byteArrayOf(35,9)+data
+        return ByteArray(preambles){0xFF.toByte()}+body+checksum(body)
     }
 
     fun checksum(bytes: ByteArray): Byte = bytes.fold(0) { acc, b -> acc xor b.u8() }.toByte()
