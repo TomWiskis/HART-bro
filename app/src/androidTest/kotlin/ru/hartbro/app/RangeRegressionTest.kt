@@ -136,7 +136,13 @@ class RangeRegressionTest {
             ui.onNodeWithTag("endWalk").performClick();assertFullButtons()
             val review=java.io.File(app.getExternalFilesDir(null),"export-review").apply{mkdirs()};assertTrue(device.takeScreenshot(java.io.File(review,"walk-end-large-font.png")))
             ui.onNodeWithTag("walkEndCancel").performClick();assertTrue(c.state.value.walkActive)
-            ui.onNodeWithTag("endWalk").performClick();device.pressBack();ui.onNodeWithTag("walkEndDialog").assertDoesNotExist();assertTrue(c.state.value.walkActive)
+            ui.onNodeWithTag("endWalk").performClick();assertFullButtons()
+            // Compose can expose the new nodes before WindowManager transfers key focus.
+            // Injecting Back in that interval closes the Activity instead of exercising the dialog.
+            waitFor{var focused=true;scenario.onActivity{focused=it.hasWindowFocus()};!focused}
+            device.pressBack()
+            waitFor{var focused=false;scenario.onActivity{focused=it.hasWindowFocus()};focused}
+            ui.onNodeWithTag("walkEndDialog").assertDoesNotExist();ui.onNodeWithTag("endWalk").assertIsDisplayed();assertTrue(c.state.value.walkActive)
             ui.onNodeWithText("Монитор",useUnmergedTree=true).performScrollTo().performClick()
             ui.onNodeWithText("Завершить обход и перейти к мониторингу…").performScrollTo().performClick();assertFullButtons()
             ui.onNodeWithTag("walkEndCancel").performClick();assertTrue(c.state.value.walkActive)
