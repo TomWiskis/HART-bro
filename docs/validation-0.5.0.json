@@ -1,0 +1,75 @@
+{
+  "sourceCommit": "d3267189fb33813b0646ebfa9302f459a6da4dbc",
+  "versionName": "0.5.0",
+  "versionCode": 8,
+  "applicationId": "ru.hartbro.app",
+  "apkBytes": 30118394,
+  "apkSha256": "525d9eea2eb86a1913e95d45751afcd221e2c0257187a6c2c63db988abd8ae59",
+  "certificateSha256": "263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09",
+  "sameCertificateAsPublished040": true,
+  "jvm": {
+    "tests": 193,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "Error": 0,
+    "Fatal": 0,
+    "Warning": 1
+  },
+  "lintIssueIds": [
+    "NewerVersionAvailable"
+  ],
+  "testClassesOrFixturesInMainApk": false,
+  "internetPermission": false,
+  "androidCiRun": "https://github.com/TomWiskis/HART-bro/actions/runs/41228629906",
+  "physical050TrialCompleted": false,
+  "android": {
+    "runId": 41228629906,
+    "sourceCommit": "d3267189fb33813b0646ebfa9302f459a6da4dbc",
+    "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41228629906",
+    "jobUrl": "https://github.com/TomWiskis/HART-bro/actions/runs/41228629906/job/124617953027",
+    "connectedDebugAndroidTest": "actually executed on Android API 36 / KVM",
+    "counts": {
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "expectedMethodsGate": "all 21 required methods present; no failures/errors/skips",
+    "transport": "in-memory fixtures only; no physical command 35",
+    "annotation": {
+      "title": "Android regression",
+      "annotation_level": "notice",
+      "message": "{'tests': 21, 'failures': 0, 'errors': 0, 'skipped': 0}"
+    },
+    "artifacts": [
+      {
+        "id": 13053427612,
+        "name": "android-lifecycle-results",
+        "size_in_bytes": 437304,
+        "digest": "sha256:7d1b3050bd171d69a868ab9e63987e39d5c5bc8beee44406643b107db0fb4dc6",
+        "expired": false,
+        "created_at": "2026-10-31T18:42:55Z",
+        "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41228629906/artifacts/13053427612"
+      },
+      {
+        "id": 13052533736,
+        "name": "hart-bro-debug",
+        "size_in_bytes": 10519203,
+        "digest": "sha256:4767db206f1cc193c8dbe57970da3b2f674f6e7313e38079f0424afae9b1c33a",
+        "expired": false,
+        "created_at": "2026-10-31T18:21:00Z",
+        "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41228629906/artifacts/13052533736"
+      }
+    ]
+  },
+  "ciConclusion": "success",
+  "publicationCiChange": {
+    "removedDuplicateDialogPreflight": true,
+    "fullSuiteCommandUnchanged": "./gradlew :app:connectedDebugAndroidTest --no-daemon",
+    "requiredUniqueAndroidMethods": 21,
+    "applicationAndTestsUnchangedFromTestedSource": true
+  }
+}
