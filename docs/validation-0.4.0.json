@@ -1,0 +1,37 @@
+{
+  "sourceCommit": "449925012dc1b42463379aa55ef20bf72066f5a4",
+  "versionName": "0.4.0",
+  "versionCode": 7,
+  "applicationId": "ru.hartbro.app",
+  "apkBytes": 30190670,
+  "apkSha256": "8af7862121d116d5ae7323e8f55689660c39237e1589fe8b67f07383f4d339af",
+  "certificateSha256": "263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09",
+  "sameCertificateAsPublished030": true,
+  "jvm": {
+    "tests": 172,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "Error": 0,
+    "Fatal": 0,
+    "Warning": 1
+  },
+  "lintIssueIds": [
+    "NewerVersionAvailable"
+  ],
+  "testClassesOrFixturesInMainApk": false,
+  "internetPermission": false,
+  "androidCiRun": "https://github.com/TomWiskis/HART-bro/actions/runs/41204161337",
+  "physical040TrialCompleted": false,
+  "ciConclusion": "success",
+  "android": {
+    "tests": 16,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "androidCheckRunUrl": "https://api.github.com/repos/TomWiskis/HART-bro/check-runs/124545733963",
+  "androidReportArtifactUrl": "https://github.com/TomWiskis/HART-bro/actions/runs/41204161337/artifacts/13043959637"
+}
