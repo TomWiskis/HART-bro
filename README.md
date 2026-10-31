@@ -1,3 +1,18 @@
+# HART-бро 0.5.0 — настройка PV-диапазона
+
+- [Скачать APK 0.5.0 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.0-debug.apk?download=1), versionCode 8.
+- [Отчёты и подтверждение проверок](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.0-test-results.zip?download=1).
+- [Успешный CI: 193 JVM и 21 фактически выполненный Android-тест](https://github.com/TomWiskis/HART-bro/actions/runs/41228629906).
+- [Компоненты и ограничения](https://github.com/TomWiskis/HART-bro/blob/main/docs/CHANGES_0.5.0.md), [формат 35 и таблица кодов](https://github.com/TomWiskis/HART-bro/blob/main/docs/HART35_0.5.0.md), [проверки](https://github.com/TomWiskis/HART-bro/blob/main/docs/VALIDATION_0.5.0.md), [единый аппаратный сценарий](https://github.com/TomWiskis/HART-bro/blob/main/docs/HARDWARE_TEST_0.5.0.md).
+
+Устанавливайте поверх официальной 0.4.0 **без удаления приложения/очистки данных**, предварительно сохранив важную текущую сессию/ведомость. Application ID и сертификат сохранены: SHA-256 `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`. Произвольный CI APK может иметь другой debug-ключ; используйте опубликованный файл. Для закрытого репозитория нужен вход в GitHub в том же браузере.
+
+Команда 35 требует отдельного подтверждения, отправляется однократно и проверяется чтениями 0/15. Устойчивый журнал сохраняет TX/RX, коды, запрошенный и фактический диапазоны; после сбоя доступна проверка без повторной записи. Мониторинг/обход и данные сохраняются, диалоги обхода исправлены. Отдельного лабораторного режима нет. Другие команды записи не добавлены.
+
+Все автоматические тесты прошли без ошибок/пропусков; APK собран; Android Lint — 0 ошибок / 1 прежнее предупреждение. Физическая запись на конкретном приборе ещё требует испытания. После выпуска работа остановлена до обратной связи. Предыдущие APK и отчёты ниже сохранены. Контрольные суммы — в SHA256SUMS.
+
+---
+
 # HART-бро 0.4.0 — обход датчиков
 
 - [Скачать APK 0.4.0 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.4.0-debug.apk?download=1), versionCode 7.
