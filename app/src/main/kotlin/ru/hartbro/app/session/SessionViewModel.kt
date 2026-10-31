@@ -125,8 +125,9 @@ class SessionController(private val app: Application, private val connectionFact
             mutableState.update { it.copy(notice = message, monitor = MonitorState(phase = MonitorPhase.ERROR, message = message)) }
         }
     }
-    @Synchronized @SuppressLint("MissingPermission")
-    fun start(address: String, name: String, initial: MonitorConnection? = null) {
+    fun start(address:String,name:String) { scope.launch { archiveActions.withLock { startMonitoringNow(address,name) } } }
+    @SuppressLint("MissingPermission")
+    private fun startMonitoringNow(address: String, name: String, initial: MonitorConnection? = null) {
         if (engine != null || walkEngine != null) { initial?.close();return }
         communicator = Communicator(name,address,true)
         initial?.prepareMonitoring()
@@ -208,6 +209,7 @@ class SessionController(private val app: Application, private val connectionFact
         mutableState.update { it.copy(saving = true) }
         scope.launch {
           archiveActions.withLock {
+            if(state.value.walkActive) { mutableState.update { it.copy(saving=false) };return@withLock }
             try {
                 val id = history.snapshot()
                 runCatching { history.event(Instant.now(), "Снимок сохранён: $id") }
@@ -220,7 +222,7 @@ class SessionController(private val app: Application, private val connectionFact
           }
         }
     }
-    fun end() { if (!state.value.saving) scope.launch { archiveActions.withLock { endNow() } } }
+    fun end() { if (!state.value.saving) scope.launch { archiveActions.withLock { if(!state.value.walkActive) endNow() } } }
     private suspend fun endNow(reason: String = "Завершение пользователем", switching: Boolean = false) {
         event("Остановка сессии: $reason")
         engine?.finishSession()
@@ -280,12 +282,13 @@ class SessionController(private val app: Application, private val connectionFact
         mutableState.update { it.copy(active=true,walkActive=true,requestedMode=ConnectionMode.WALK,monitor=MonitorState(),notice=null) }
         event("Обход начат: ${selected.name} (${selected.address}); только чтение; сохранение ведомости вручную")
         val worker=WalkEngine(scope,{createConnection(selected.address)},walkCatalog,
-            changed={ book -> walkStore.writeDraft(book);mutableState.update { it.copy(walkDraftAvailable=true) } }, diagnostic=::event)
+            changed={ _ -> walkStore.writeDraft(walkCatalog::snapshot);mutableState.update { it.copy(walkDraftAvailable=true) } }, diagnostic=::event)
         walkEngine=worker
         walkObserver=scope.launch { worker.state.collect { walk -> mutableState.update { it.copy(walk=walk) } } }
         worker.start(initial)
     }
     fun retryWalk() { scope.launch { archiveActions.withLock {
+        if(!state.value.walkActive || walkEngine==null || engine!=null || state.value.walk.phase!=WalkPhase.DECISION) return@withLock
         val selected=communicator ?: return@withLock
         walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
         startWalkNow(selected)
@@ -303,9 +306,12 @@ class SessionController(private val app: Application, private val connectionFact
         runCatching { walkStore.clearDraft() }.onSuccess { walkCatalog=WalkCatalog();mutableState.update { it.copy(walk=WalkState(),walkDraftAvailable=false) } }.onFailure { notice("Ошибка удаления черновика: ${it.message}") }
     } } }
     fun saveWalk() { scope.launch { archiveActions.withLock {
+        if(walkCatalog.snapshot().let { it.rows.isEmpty() && it.pending.isEmpty() }) { notice("В ведомости пока нет приборов");return@withLock }
         runCatching { walkStore.save(walkCatalog.snapshot()) }.onSuccess { refreshWalks();notice("Ведомость сохранена. Обход продолжается, если был запущен.") }.onFailure { notice("Ошибка сохранения ведомости: ${it.message}") }
     } } }
     fun finishWalk(save:Boolean,monitorNext:Boolean=false) { scope.launch { archiveActions.withLock {
+        // Ignore stale/double UI actions after ownership has already moved to ordinary monitoring.
+        if(engine!=null || !state.value.walkActive && walkCatalog.snapshot().endedAt!=null) return@withLock
         walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
         val finishedAt=Instant.now()
         if(save) try { walkStore.save(walkCatalog.snapshot().copy(endedAt=finishedAt)) } catch(e:Exception) {
@@ -317,7 +323,7 @@ class SessionController(private val app: Application, private val connectionFact
         val completed=if(save) walkCatalog.snapshot() else null
         if(!save) walkCatalog=WalkCatalog();mutableState.update { it.copy(active=false,walkActive=false,walkDraftAvailable=false,walk=WalkState(book=completed,message=if(save) "Ведомость сохранена; обход завершён" else "Обход завершён без сохранения"),requestedMode=ConnectionMode.MONITOR) }
         refreshWalks()
-        if(monitorNext && communicator!=null) { val d=communicator!!;start(d.address,d.name) }
+        if(monitorNext && communicator!=null) { val d=communicator!!;startMonitoringNow(d.address,d.name) }
         else app.stopService(Intent(app,MonitoringService::class.java))
     } } }
     fun editWalk(rowId:String,values:Map<PassportField,String>,savedId:String?=null) = mutateWalk(savedId) { edit(rowId,values) }
@@ -331,7 +337,7 @@ class SessionController(private val app: Application, private val connectionFact
                 val catalog=WalkCatalog(walkStore.load(savedId));catalog.action();walkStore.save(catalog.snapshot());refreshWalks()
             } else {
                 // A saved snapshot of the currently active walk is the same document, not a second writable copy.
-                walkCatalog.action();walkStore.writeDraft(walkCatalog.snapshot());walkEngine?.documentChanged()
+                walkCatalog.action();walkStore.writeDraft(walkCatalog::snapshot);walkEngine?.documentChanged()
                 if(savedId!=null || walkCatalog.snapshot().endedAt!=null) { walkStore.save(walkCatalog.snapshot());refreshWalks() }
                 mutableState.update { it.copy(walk=it.walk.copy(book=walkCatalog.snapshot()),walkDraftAvailable=true) }
             }

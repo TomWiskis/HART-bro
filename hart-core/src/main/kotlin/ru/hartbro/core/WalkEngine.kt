@@ -50,6 +50,7 @@ class WalkEngine(private val scope: CoroutineScope, private val connect: suspend
                             val result = try { confirmedRowForPresence?.let { catalog.refreshConfirmed(it,reading) } ?: catalog.ingest(reading, pendingId) } catch (e: Exception) {
                                 close();publish(WalkPhase.DECISION, "Ведомость сохранена в памяти: ${e.message}");return@launch
                             };pendingId = result.pendingId
+                            if(result.pendingId!=null) confirmedRowForPresence=null
                             lastReadMillis = clock()
                             try { changed(catalog.snapshot()) } catch (e: Exception) {
                                 close();publish(WalkPhase.DECISION, "Ошибка черновика: ${e.message}. Строки сохранены в памяти; экспортируйте ведомость.");return@launch

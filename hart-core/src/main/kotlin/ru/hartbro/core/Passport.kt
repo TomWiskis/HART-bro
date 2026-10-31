@@ -140,8 +140,8 @@ class PassportReader(private val client: HartClient, private val profiles: Passp
                 .onFailure { errors["16"] = it.message ?: "Номер сборки неизвестен" }
         }
         profile?.additionalReads?.distinct()?.filter { it !in replies && it != ReadCommand.IDENTITY }?.forEach { optional(it) }
-        if (profile != null) runCatching { profile.factoryFields(identity, replies) }.onSuccess { proposed ->
-            proposed.forEach { (key, value) ->
+        if (profile != null) runCatching {
+            profile.factoryFields(identity, replies).forEach { (key, value) ->
                 if (key in setOf(PassportField.SERIAL, PassportField.DATE) && value.factoryConfirmed &&
                     value.source in setOf(FactSource.PROFILE,FactSource.CONFIRMED_FACTORY) && value.documentation==profile.documentation) {
                     val reply=replies.entries.firstOrNull { it.key.number==value.command }?.value

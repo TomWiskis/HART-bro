@@ -33,6 +33,7 @@ class WalkRegressionTest {
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard")
         app.failIdentity=false;app.identifyDelay=0;app.hartDeviceId=0x5FCA7F;app.hartFailures.set(0);app.bluetoothFailures.set(0);app.walkBluetoothFailures.set(0)
         c.finishWalk(false);waitFor{!c.state.value.walkActive && !c.state.value.serviceRunning}
+        c.discardWalkDraft();waitFor{!c.state.value.walkDraftAvailable}
         c.state.value.savedWalks.forEach{c.deleteWalk(it.id)};waitFor{c.state.value.savedWalks.isEmpty()}
     }
     @After fun stop() {
@@ -80,9 +81,14 @@ class WalkRegressionTest {
             val connects=app.connections.get();app.walkBluetoothFailures.set(1);app.hartDeviceId=3
             waitFor{app.connections.get()>connects && c.state.value.walk.book!!.rows.size==2}
             assertNull(c.state.value.monitor.startedAt);assertFalse(c.state.value.walk.book!!.rows.first().fields[PassportField.SERIAL]?.factoryConfirmed==true)
-            c.beginSession();SystemClock.sleep(300);assertNull(c.state.value.monitor.startedAt)
+            c.beginSession();c.end();c.save(finish=true);waitFor{!c.state.value.saving}
+            SystemClock.sleep(300);assertNull(c.state.value.monitor.startedAt);assertTrue(c.state.value.walkActive)
             c.finishWalk(true,monitorNext=true);waitFor{c.state.value.monitor.phase==MonitorPhase.READY && !c.state.value.walkActive && c.state.value.savedWalks.size==1}
             assertEquals(2,c.state.value.savedWalks.single().rows.size);assertNull(c.state.value.monitor.startedAt)
+            // A late retry/end tap from the previous screen must not create a second owner or stop the new service.
+            val normalConnects=app.connections.get();c.retryWalk();c.finishWalk(false);SystemClock.sleep(300)
+            assertFalse(c.state.value.walkActive);assertTrue(c.state.value.active);assertTrue(c.state.value.serviceRunning)
+            assertEquals(MonitorPhase.READY,c.state.value.monitor.phase);assertEquals(normalConnects,app.connections.get())
             c.beginSession();waitFor{c.state.value.monitor.latest!=null};assertFalse(c.state.value.walkActive)
         }
     }

@@ -28,6 +28,7 @@ class WalkCatalog(initial: WalkBook = WalkBook()) {
     @Synchronized fun takeResolvedRow(pendingId:String):String? = resolutions.remove(pendingId)
     @Synchronized fun refreshConfirmed(rowId:String,reading:PassportReading):WalkMerge {
         val row=book.rows.first { it.id==rowId };require(row.key==reading.key)
+        if(numbersChanged(row,reading)) return ingest(reading)
         book=book.copy(rows=book.rows.map { if(it.id==rowId) refresh(it,reading) else it });return WalkMerge(rowId,null)
     }
     @Synchronized fun snapshot() = book.copy(rows = book.rows.toList(), pending = book.pending.toList())
@@ -39,10 +40,7 @@ class WalkCatalog(initial: WalkBook = WalkBook()) {
             val row = newRow(reading);book = book.copy(rows = book.rows + row);return WalkMerge(row.id, null)
         }
         val target = targets.singleOrNull()
-        val changedNumbers = target?.let { before -> listOf("sensorNumber", "assemblyNumber").any { key ->
-            val a = before.observed.candidates[key]?.value;val b = reading.candidates[key]?.value
-            a != null && b != null && a != b
-        } } ?: false
+        val changedNumbers = target?.let { numbersChanged(it,reading) } ?: false
         if (target == null || !reliablePassportKey(reading.identity) || changedNumbers) {
             val pending = PendingPassport(currentPending?.takeIf { id -> book.pending.any { it.id == id } } ?: UUID.randomUUID().toString(), reading,
                 if (changedNumbers) "Совпадает HART ID, но изменились номера сенсора/сборки. Проверьте прибор и разделите записи при необходимости."
@@ -54,6 +52,10 @@ class WalkCatalog(initial: WalkBook = WalkBook()) {
         val updated = refresh(target, reading)
         book = book.copy(rows = book.rows.map { if (it.id == target.id) updated else it })
         return WalkMerge(target.id, null)
+    }
+    private fun numbersChanged(before:WalkRow,reading:PassportReading) = listOf("sensorNumber","assemblyNumber").any { key ->
+        val a=before.observed.candidates[key]?.value;val b=reading.candidates[key]?.value
+        a!=null && b!=null && a!=b
     }
     private fun refresh(previous: WalkRow, reading: PassportReading): WalkRow {
         val fields = previous.fields.toMutableMap()
@@ -70,7 +72,7 @@ class WalkCatalog(initial: WalkBook = WalkBook()) {
                 if (fields[PassportField.RANGE]?.manual != true) { fields[PassportField.RANGE] = reading.fields.getValue(PassportField.RANGE);accepted = range }
             }
         }
-        return previous.copy(observed = reading, fields = fields, acceptedRange = accepted, pendingRange = pending, pendingRangeFact = pendingFact)
+        return previous.copy(observed = reading.copy(candidates=previous.observed.candidates + reading.candidates), fields = fields, acceptedRange = accepted, pendingRange = pending, pendingRangeFact = pendingFact)
     }
     @Synchronized fun edit(rowId: String, values: Map<PassportField, String>, at: Instant = Instant.now()) {
         val row = book.rows.first { it.id == rowId };val fields = row.fields.toMutableMap()

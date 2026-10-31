@@ -185,4 +185,29 @@ class WalkTest {
         assertSame(conn,monitor.detachReadyConnection());conn.close()
     }
 
+    @Test fun partialReadsRetainIdentityEvidenceAndConfirmedRowsStillDetectDifferentNumbers() {
+        val catalog=WalkCatalog();val id=catalog.ingest(reading040(sensor="1234")).rowId!!
+        catalog.ingest(reading040().copy(candidates=emptyMap(),errors=mapOf("14" to "timeout")))
+        assertEquals("1234",catalog.snapshot().rows.single().observed.candidates["sensorNumber"]!!.value)
+        val collision=catalog.ingest(reading040(sensor="5678"));assertNotNull(collision.pendingId)
+        catalog.resolvePending(collision.pendingId!!,id)
+        assertEquals(id,catalog.refreshConfirmed(id,reading040(sensor="5678")).rowId)
+        assertNotNull(catalog.refreshConfirmed(id,reading040(sensor="9999")).pendingId)
+        assertEquals("5678",catalog.snapshot().rows.single().observed.candidates["sensorNumber"]!!.value)
+    }
+    @Test fun delayedDraftCallbacksReadLatestManualFieldsAfterAcquiringStorageLock() {
+        val directory=Files.createTempDirectory("walk-draft-order").toFile()
+        try {
+            val store=WalkStore(directory);val catalog=WalkCatalog();val id=catalog.ingest(reading040()).rowId!!
+            val ready=java.util.concurrent.CountDownLatch(1)
+            val writer=Thread { ready.countDown();store.writeDraft(catalog::snapshot) }
+            synchronized(store) {
+                writer.start();assertTrue(ready.await(2,java.util.concurrent.TimeUnit.SECONDS))
+                catalog.edit(id,mapOf(PassportField.SERIAL to "00042"))
+            }
+            writer.join(2000);assertFalse(writer.isAlive)
+            assertEquals("00042",store.restoreDraft().rows.single().text(PassportField.SERIAL))
+        } finally { directory.deleteRecursively() }
+    }
+
 }

@@ -12,6 +12,8 @@ class WalkStore(private val directory: File) {
     private fun file(id: String): File { require(UUID.fromString(id).toString() == id);return File(directory, "$id.walk") }
     @Synchronized fun save(book: WalkBook) = atomic(file(book.id), book)
     @Synchronized fun writeDraft(book: WalkBook) = atomic(draft, book)
+    /** Fetch the newest catalog after obtaining the writer lock; an older callback cannot overwrite a manual edit. */
+    @Synchronized fun writeDraft(snapshot: () -> WalkBook) = atomic(draft, snapshot())
     @Synchronized fun clearDraft() { if (draft.exists()) check(draft.delete()) { "Не удалось удалить черновик" } }
     @Synchronized fun hasDraft() = draft.exists()
     @Synchronized fun restoreDraft(): WalkBook = read(draft)
