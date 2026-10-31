@@ -41,6 +41,7 @@ class RangeRegressionTest {
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");app.rangeMode=0;app.rangeAckDelay=0;app.rangeHoldAck=false
         app.stopService(Intent(app,MonitoringService::class.java));waitFor{!c.state.value.active && !c.state.value.serviceRunning && !c.state.value.rangeOwned}
         c.closeRange();c.end();c.finishWalk(false);c.discardWalkDraft();c.disconnect()
+        SystemClock.sleep(300) // Let queued application cleanup finish before the next Activity launch.
         java.io.File(app.filesDir,"range-operations").deleteRecursively();c.refreshRangeRecords();waitFor{c.state.value.rangeRecords.isEmpty()}
         if(font.toFloatOrNull()!=null)device.executeShellCommand("settings put system font_scale $font") else device.executeShellCommand("settings delete system font_scale")
         device.executeShellCommand("wm size reset");device.executeShellCommand("wm density reset")
@@ -65,9 +66,9 @@ class RangeRegressionTest {
             ui.onNodeWithTag("rangeConfirmWrite").performClick();c.confirmRange(token);waitFor{app.rangeWrites.get()==1}
             device.pressHome();device.sleep();assertFalse(device.isScreenOn);SystemClock.sleep(500)
             device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");device.executeShellCommand("am start -W -n ${app.packageName}/.MainActivity");scenario.recreate();assertTrue(c.state.value.range.busy);app.rangeHoldAck=false
-            waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned}
+            waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned && c.state.value.monitor.configuration.range?.upper==10f}
             assertEquals(1,app.rangeWrites.get());assertEquals(started,c.state.value.monitor.startedAt)
-            assertEquals(10f,c.state.value.monitor.configuration.range!!.upper,0f);waitFor{app.samples.get()>samples}
+            assertEquals(10f,c.state.value.monitor.configuration.range!!.upper,0f);waitFor{app.samples.get()>samples && c.state.value.monitor.latest!=null}
             val record=c.state.value.range.record!!;assertTrue(record.tx.isNotBlank());assertTrue(record.rx.isNotBlank());assertEquals(10f,record.actual!!.upper,0f)
             val text=java.io.ByteArrayOutputStream().also{c.writeRangeReport(record.id,it)}.toString("UTF-8");assertTrue(text.contains("команда 35"));assertTrue(text.contains("TX:"));assertTrue(text.contains("0…10"))
             assertEquals(1.25f,c.state.value.monitor.latest!!.values.first().value,0f)
@@ -105,7 +106,7 @@ class RangeRegressionTest {
             waitFor{c.state.value.range.record?.outcome==RangeOutcome.UNKNOWN && !c.state.value.rangeOwned}
             assertEquals(1,app.rangeWrites.get());val samples=app.samples.get();SystemClock.sleep(1200);assertEquals(samples,app.samples.get())
             app.rangeMode=0;val id=c.state.value.range.record!!.id;c.openRange(id)
-            waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned};waitFor{app.samples.get()>samples}
+            waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned};waitFor{app.samples.get()>samples && c.state.value.monitor.latest!=null}
             c.openRange();waitFor{c.state.value.range.phase==RangePhase.FORM};c.selectRange("0","12");app.hartDeviceId=99;c.confirmRange(c.state.value.range.token)
             waitFor{c.state.value.range.record?.outcome==RangeOutcome.DIFFERENT_DEVICE && !c.state.value.rangeOwned};assertEquals(1,app.rangeWrites.get())
             c.openRange(acceptCurrentDevice=true);waitFor{c.state.value.range.phase==RangePhase.FORM};assertEquals(99,c.state.value.range.snapshot!!.identity.deviceId);assertNull(c.state.value.range.requested)
