@@ -48,7 +48,7 @@ private val success = Color(0xFF168047)
     if(r!=null) {
         Text("Переподключение · ${(r.remainingMillis+999)/1000} с",modifier=Modifier.testTag("recoveryCountdown"))
         Text("Причина: ${when(r.reason){LossReason.BLUETOOTH->"потеря Bluetooth";LossReason.HART->"нет ответа HART";else->"не определена"}}")
-    } else if(!good) { Text(when(m.phase){MonitorPhase.PAUSED->"Опрос приостановлен";MonitorPhase.DECISION->"Связь не восстановлена";else->m.message}) }
+    } else if(!good) { Text(when(m.phase){MonitorPhase.PAUSED->"Опрос приостановлен";MonitorPhase.DECISION->"Связь не восстановлена";else->m.message.takeUnless{it=="Ответ HART получен"} ?: "Нет актуального ответа HART"}) }
 }
 @Composable private fun ReadingCard(label:String,value:String,stale:Boolean,tag:String) {
     Card(Modifier.fillMaxWidth().testTag(tag)) { Column(Modifier.padding(12.dp)) {
