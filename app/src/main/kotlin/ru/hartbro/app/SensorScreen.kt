@@ -19,7 +19,7 @@ import java.time.Instant
 private val success = Color(0xFF168047)
 @Composable internal fun BluetoothBadge(state: SessionState) {
     val connected = if(state.rangeOwned) state.rangeTransportOpen else if(state.walkActive) state.walk.bluetoothConnected else state.monitor.bluetoothConnected
-    val recovering = if(state.walkActive) state.walk.recovery?.reason == LossReason.BLUETOOTH
+    val recovering = if(state.rangeOwned) state.range.phase == RangePhase.RECOVERING && !connected else if(state.walkActive) state.walk.recovery?.reason == LossReason.BLUETOOTH
         else state.monitor.recovery?.reason == LossReason.BLUETOOTH || state.monitor.phase == MonitorPhase.CONNECTING && !connected
     val name = state.communicator?.name ?: "Не подключён"
     val status = if(connected) "подключён" else if(recovering) "переподключение" else "отключён"
