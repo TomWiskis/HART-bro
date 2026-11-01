@@ -255,7 +255,7 @@ class SessionController(private val app: Application, private val connectionFact
             } catch(e: CancellationException) { throw e }
             catch(e: Exception) { mutableState.update { it.copy(diagnosticError = e.message ?: "Чтение диагностики не выполнено") } }
             finally {
-                if(acquired) runCatching { engine?.releaseConfiguration(conn, verification, !different && conn?.isOpen == true,
+                if(acquired) runCatching { engine?.releaseConfiguration(conn, verification, !different,
                     if(different) "Обнаружен другой прибор" else "Диагностическое чтение завершено", different) }
                     .onFailure { error -> mutableState.update { it.copy(diagnosticError="Ошибка завершения чтения: ${error.message}") } }
                 mutableState.update { it.copy(diagnosticLoading = false) }
