@@ -152,7 +152,8 @@ class RangeRegressionTest {
             waitFor{var focused=true;scenario.onActivity{focused=it.hasWindowFocus()};!focused}
             assertTrue("Screen must be awake before the native Back action",device.isScreenOn)
             assertEquals("Dialog must belong to the foreground application",app.packageName,device.currentPackageName)
-            assertTrue(device.pressBack())
+            // Assert the actual window effects below instead of UiAutomator's injection boolean.
+            device.executeShellCommand("input keyevent KEYCODE_BACK")
             ui.waitForIdle() // Native input does not advance Compose's test frame clock by itself.
             waitFor{var focused=false;scenario.onActivity{focused=it.hasWindowFocus()};focused}
             ui.onNodeWithTag("walkEndDialog").assertDoesNotExist();ui.onNodeWithTag("endWalk").assertIsDisplayed();assertTrue(c.state.value.walkActive)
