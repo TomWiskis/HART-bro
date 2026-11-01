@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.os.SystemClock
 import androidx.compose.ui.test.*
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -32,7 +33,7 @@ class RangeRegressionTest {
         if(!check()) {
             val windows=runCatching{device.executeShellCommand("dumpsys window").lineSequence().filter{it.contains("mCurrentFocus") || it.contains("mFocusedApp")}.joinToString("; ")}.getOrDefault("unavailable")
             val lifecycle=c.state.value.diagnostics.filter{it.kind=="ACTIVITY"}.takeLast(4).joinToString("; "){it.message}
-            fail("Range condition timed out: screenOn=${device.isScreenOn}; package=${device.currentPackageName}; windows=$windows; monitor=${c.state.value.monitor.phase}; walk=${c.state.value.walk.phase}; range=${c.state.value.range.phase}; lifecycle=$lifecycle")
+            fail("Range condition timed out: screenOn=${device.isScreenOn}; package=${device.currentPackageName}; windows=$windows; monitor=${c.state.value.monitor.phase}; walk=${c.state.value.walk.phase}; range=${c.state.value.range.phase}; message=${c.state.value.range.message}; validation=${c.state.value.range.validation}; lifecycle=$lifecycle")
         }
     }
     @Before fun reset() {
@@ -77,7 +78,14 @@ class RangeRegressionTest {
         waitFor{!c.state.value.diagnosticLoading && c.state.value.sensorDiagnostics!=null}
         openForm{ui.onNodeWithTag("openRange").performScrollTo().performClick()}
     }
-    private fun chooseTen(){ui.onNodeWithTag("rangeUpper").performScrollTo().performTextReplacement("10");ui.onNodeWithTag("rangeSet").performScrollTo().performClick();waitFor{c.state.value.range.phase==RangePhase.CONFIRM}}
+    private fun chooseTen(){
+        ui.onNodeWithTag("rangeUpper").performScrollTo().performTextReplacement("10")
+        ui.onNodeWithTag("rangeUpper").assertTextContains("10")
+        // These scenarios exercise durable writes/lifecycle. The narrow-screen test retains touch input.
+        ui.onNodeWithTag("rangeSet").performScrollTo().assertIsDisplayed().assertIsEnabled()
+            .performSemanticsAction(SemanticsActions.OnClick){it()}
+        waitFor{c.state.value.range.phase==RangePhase.CONFIRM}
+    }
     @Test fun confirmedWriteSurvivesHomeScreenLockAndRecreateWithoutRepeatAndResumesSameSession() {
         ActivityScenario.launch(MainActivity::class.java).use {scenario->
             app.rangeTimeout=30000;app.rangeHoldAck=true;open(scenario,session=true)
