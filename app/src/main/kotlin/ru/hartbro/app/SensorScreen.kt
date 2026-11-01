@@ -41,7 +41,7 @@ private val success = Color(0xFF168047)
     val m=state.monitor
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(Unit) { while(true) { kotlinx.coroutines.delay(1000); now=Instant.now() } }
-    val good=m.bluetoothConnected && m.phase in setOf(MonitorPhase.READY,MonitorPhase.MONITORING) && measurementFresh(m.lastHartSuccess,now,m.periodMillis)
+    val good=m.hartExchangeCurrent(now)
     Text("${sensorTitle(m.identity)}  ${if(good) "✓" else "✕"}",color=if(good)success else MaterialTheme.colorScheme.error,
         style=MaterialTheme.typography.titleMedium,modifier=Modifier.testTag("sensorStatus"))
     val r=m.recovery

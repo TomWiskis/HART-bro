@@ -38,6 +38,16 @@ class Presentation052Test {
         assertTrue(sensorTitle(metran02).startsWith("HART-датчик"))
         assertFalse(sensorTitle(metran02).contains("Метран-150"))
     }
+    @Test fun failedExpectedReadTurnsHartIndicatorOffEvenWithHealthyBluetoothAndRecentSuccess() {
+        val now=Instant.ofEpochMilli(100_000)
+        val state=MonitorState(phase=MonitorPhase.MONITORING,identity=metran02,latest=sample02(100_000),lastHartSuccess=now,bluetoothConnected=true)
+        assertTrue(state.hartExchangeCurrent(now))
+        assertFalse(state.copy(latest=null).hartExchangeCurrent(now.plusMillis(1)))
+        assertFalse(state.copy(bluetoothConnected=false).hartExchangeCurrent(now))
+        assertFalse(state.copy(phase=MonitorPhase.RECOVERING).hartExchangeCurrent(now))
+        assertFalse(state.hartExchangeCurrent(now.plusSeconds(20)))
+        assertTrue(state.copy(phase=MonitorPhase.READY,latest=null).hartExchangeCurrent(now))
+    }
     @Test fun historyDeletionIsLocalPreservesOtherRecordsAndRefusesInFlightIntent() {
         val directory=Files.createTempDirectory("history-052").toFile()
         try {

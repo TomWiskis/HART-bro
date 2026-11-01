@@ -21,3 +21,8 @@ fun rangeChanges(record: RangeRecord): List<String> = buildList {
     if (a.unitCode != b.unitCode) add("Единица: ${HartUnits.find(a.unitCode)?.symbol ?: a.unitCode} → ${HartUnits.find(b.unitCode)?.symbol ?: b.unitCode}")
 
 }
+
+/** An expected measurement that failed must turn the HART indicator off immediately. */
+fun MonitorState.hartExchangeCurrent(now: Instant): Boolean = bluetoothConnected && identity != null &&
+    (phase == MonitorPhase.READY || phase == MonitorPhase.MONITORING && latest != null) &&
+    measurementFresh(lastHartSuccess, now, periodMillis)
