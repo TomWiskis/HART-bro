@@ -226,6 +226,8 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
             PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                 listOf("Связь", "Монитор", "Журнал", "HEX", "Обход").forEachIndexed { i, text -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(text, maxLines = 1) }) }
             }
+            // Dispose the report's scroll/fling node before showing a different page.
+            key(tab,archiveId) {
             Column(Modifier.fillMaxSize().testTag(if (tab == 2 && archiveId != null) "archiveScroll" else "sectionScroll").verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if(tab != 1) Text(if(state.walkActive) state.walk.message else monitor.message.takeUnless{it=="Ответ HART получен"} ?: "Мониторинг", style = MaterialTheme.typography.titleMedium)
                 state.notice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
@@ -288,6 +290,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         } }
                     }
                 }
+            }
             }
             }
         }
