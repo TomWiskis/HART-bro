@@ -3,6 +3,9 @@ package ru.hartbro.app
 import android.Manifest
 import android.content.Intent
 import android.os.SystemClock
+import android.view.inputmethod.InputMethodManager
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.test.*
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -27,6 +30,7 @@ class RangeRegressionTest {
     private val device get()=UiDevice.getInstance(instrumentation)
     private var font="1.0"
     private var screenTimeout=""
+    private lateinit var activeScenario:ActivityScenario<MainActivity>
     private fun waitFor(check:()->Boolean) {
         val deadline=SystemClock.elapsedRealtime()+25000
         while(!check() && SystemClock.elapsedRealtime()<deadline)SystemClock.sleep(100)
@@ -56,6 +60,7 @@ class RangeRegressionTest {
         instrumentation.waitForIdleSync()
     }
     private fun connect(scenario:ActivityScenario<MainActivity>,walk:Boolean=false) {
+        activeScenario=scenario
         scenario.onActivity{app.startForegroundService(Intent(app,MonitoringService::class.java).putExtra("address","00:11:22:33:44:55").putExtra("name","Instrumentation-only").putExtra("mode",if(walk)ConnectionMode.WALK.name else ConnectionMode.MONITOR.name))}
         waitFor{if(walk)c.state.value.walk.book?.rows?.size==1 && c.state.value.walkActive else c.state.value.monitor.phase==MonitorPhase.READY}
         ui.waitUntil(15000){runCatching{ui.onAllNodesWithText("Связь",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}.getOrDefault(false)}
@@ -81,6 +86,19 @@ class RangeRegressionTest {
     private fun chooseTen(){
         ui.onNodeWithTag("rangeUpper").performScrollTo().performTextReplacement("10")
         ui.onNodeWithTag("rangeUpper").assertTextContains("10")
+        ui.waitForIdle()
+        activeScenario.onActivity { activity ->
+            activity.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(activity.window.decorView.windowToken,0)
+        }
+        waitFor {
+            var hidden=false
+            activeScenario.onActivity { activity ->
+                val insets=ViewCompat.getRootWindowInsets(activity.window.decorView)
+                hidden=insets!=null && !insets.isVisible(WindowInsetsCompat.Type.ime()) && insets.getInsets(WindowInsetsCompat.Type.ime()).bottom==0
+            }
+            hidden
+        }
+        ui.waitForIdle()
         // These scenarios exercise durable writes/lifecycle. The narrow-screen test retains touch input.
         ui.onNodeWithTag("rangeSet").performScrollTo().assertIsDisplayed().assertIsEnabled()
             .performSemanticsAction(SemanticsActions.OnClick){it()}
