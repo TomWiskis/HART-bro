@@ -1,0 +1,96 @@
+{
+  "version": "0.5.3",
+  "versionCode": 11,
+  "applicationId": "ru.hartbro.app",
+  "sourceCommit": "094c1ef2940275a71df6f55cc9fced55fd7d2a5d",
+  "sourceBranch": "feature/0.5.3-quick-view",
+  "recordedAtUtc": "2026-11-01T16:26:31.904456+00:00",
+  "jvm": {
+    "tests": 222,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": {
+      "ru.hartbro.core.ChartAxesTest": 3,
+      "ru.hartbro.core.ChartViewportTest": 6,
+      "ru.hartbro.core.ConfigurationLeaseTest": 3,
+      "ru.hartbro.core.ConfigurationTest": 8,
+      "ru.hartbro.core.DiagnosticJournalTest": 3,
+      "ru.hartbro.core.ExcelExportTest": 7,
+      "ru.hartbro.core.HartClientTest": 17,
+      "ru.hartbro.core.HartCodecTest": 13,
+      "ru.hartbro.core.HartDescriptionsTest": 7,
+      "ru.hartbro.core.HartDeviceTest": 8,
+      "ru.hartbro.core.JournalExportTest": 6,
+      "ru.hartbro.core.MeasurementsTest": 23,
+      "ru.hartbro.core.MetranRegressionTest": 15,
+      "ru.hartbro.core.MonitoringEngineTest": 19,
+      "ru.hartbro.core.PassportTest": 11,
+      "ru.hartbro.core.RangeWriteTest": 18,
+      "ru.hartbro.core.SessionHistoryTest": 14,
+      "ru.hartbro.core.SessionLifecycle030Test": 3,
+      "ru.hartbro.core.WalkTest": 15,
+      "ru.hartbro.core.SensorOperations053Test": 12,
+      "ru.hartbro.core.QuickView053Test": 5,
+      "ru.hartbro.core.Presentation052Test": 6
+    }
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 1
+  },
+  "apk": {
+    "file": "hart-bro-0.5.3-debug.apk",
+    "bytes": 30597086,
+    "sha256": "0fc9289589cc8b9550ea341ebcd7104f1fe7c2930d5ac2c7d896cb1c0858687b",
+    "certificateSha256": "263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09",
+    "minSdk": 29,
+    "targetSdk": 36,
+    "testFixturesAbsent": true
+  },
+  "android": {
+    "status": "success",
+    "runId": 41323721577,
+    "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41323721577",
+    "expectedTests": 28,
+    "jobId": 124899160802,
+    "smokeExpectedTests": 12,
+    "counts": {
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "smoke": {
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "artifact": {
+      "id": 13091401871,
+      "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41323721577/artifacts/13091401871",
+      "sha256": "d346fde4e2e0e3df69365b7ae87f8b08b78d7065a8581f12b548e33d4918b5fd",
+      "bytes": 628671
+    }
+  },
+  "physicalHardwareTest": false,
+  "limitations": [
+    "Device ID / Meter ID is read-only; no universal write command",
+    "Zero allowed only for documented Viatran 970 HART5 DEV_REV2 profile",
+    "Other unit writes require documented device capability",
+    "Physical VIATOR and pressure transmitter unavailable in this environment"
+  ],
+  "ciBuild": {
+    "status": "success",
+    "jobId": 124899160997,
+    "jvmPassed": 222,
+    "artifact": {
+      "id": 13089912723,
+      "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41323721577/artifacts/13089912723",
+      "sha256": "ed04fa803795439274b9d3dc0e20c7afce59e07a0f4a0002f9d4d86bb20579f8",
+      "bytes": 10643626
+    }
+  },
+  "applicationCodeUnchangedSince": "5e3f31729970feb30a6546c6616fcc333346acee"
+}
