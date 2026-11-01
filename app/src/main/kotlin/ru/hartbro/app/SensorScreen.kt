@@ -43,7 +43,7 @@ private val success = Color(0xFF168047)
     val m=state.monitor
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(Unit) { while(true) { kotlinx.coroutines.delay(1000); now=Instant.now() } }
-    val good=m.hartExchangeCurrent(now)
+    val good=m.hartExchangeCurrent(maxOf(now,Instant.now()))
     val title=if(showType)sensorTitle(m.identity) else m.identity?.let{listOfNotNull(it.manufacturerName,HartDeviceCatalog.model(it)).joinToString(" · ").ifBlank{"HART-датчик"}} ?: "HART-датчик"
     Text("$title  ${if(good) "✓" else "✕"}",color=if(good)success else MaterialTheme.colorScheme.error,
         style=MaterialTheme.typography.titleMedium,modifier=Modifier.testTag("sensorStatus"))
@@ -72,9 +72,11 @@ private val success = Color(0xFF168047)
     val pv=batch?.values?.find{it.slot=="PV"}
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(Unit){while(true){kotlinx.coroutines.delay(1000);now=Instant.now()}}
-    val fresh=m.bluetoothConnected && m.latest!=null && measurementFresh(batch?.receivedAt,now,m.periodMillis) && m.phase==MonitorPhase.MONITORING
+    // A new reply can arrive between timer ticks. Always age it against the current render time.
+    val currentTime=maxOf(now,Instant.now())
+    val fresh=m.bluetoothConnected && m.latest!=null && measurementFresh(batch?.receivedAt,currentTime,m.periodMillis) && m.phase==MonitorPhase.MONITORING
     ReadingCard(primaryParameter(pv?.unitCode),pv?.takeIf{it.plottable}?.let{"${it.value.toString().replace('.',',')} ${it.unit}"} ?: "Нет данных",batch!=null && !fresh,"primaryReading")
-    val loopFresh=fresh && measurementFresh(batch?.loopCurrentAt,now,m.periodMillis)
+    val loopFresh=fresh && measurementFresh(batch?.loopCurrentAt,currentTime,m.periodMillis)
     ReadingCard("Ток петли",batch?.loopCurrent?.takeIf{it.isFinite()}?.let{"${it.toString().replace('.',',')} мА"} ?: "Нет данных",batch?.loopCurrent!=null && !loopFresh,"loopReading")
     Text("Периодичность опроса")
     FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { listOf(1L,2L,5L,10L).forEach{sec->FilterChip(m.periodMillis==sec*1000,{c.period(sec*1000)},label={Text("$sec с")})} }
@@ -85,7 +87,7 @@ private val success = Color(0xFF168047)
     val m=state.monitor
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(Unit) { while(true) { kotlinx.coroutines.delay(1000); now=Instant.now() } }
-    val good=m.hartExchangeCurrent(now)
+    val good=m.hartExchangeCurrent(maxOf(now,Instant.now()))
     val ready=m.identity!=null && m.phase==MonitorPhase.READY && !state.rangeOwned && !state.editBusy
     val config=m.configuration
     Card(Modifier.fillMaxWidth().testTag("quickSensorCard")) {
