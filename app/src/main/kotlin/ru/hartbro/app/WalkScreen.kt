@@ -47,7 +47,7 @@ internal fun WalkScreen(state: SessionState,c: SessionController,onStart:()->Uni
                 listOf(500L,1000L,2000L).forEach { ms -> FilterChip(state.walk.intervalMillis==ms,{c.walkInterval(ms)},label={Text(if(ms==500L) "0,5 с" else "${ms/1000} с")}) }
             }
             OutlinedButton(onClick=c::rereadWalk,enabled=state.walk.bluetoothConnected) { Text("Повторить чтение текущего прибора") }
-            state.walk.recovery?.let { p -> Text("Восстановление Bluetooth: осталось ${(p.remainingMillis+999)/1000} с; попытка ${p.attempt}");LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            state.walk.recovery?.let { p -> Text("Переподключение · ${(p.remainingMillis+999)/1000} с; попытка ${p.attempt}");LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if(state.walk.phase==WalkPhase.DECISION) {
                 Text("Полученные строки остаются в ведомости. Можно подключиться к VIATOR повторно или завершить обход.")
                 Button(onClick=c::retryWalk) { Text("Повторить подключение VIATOR") }

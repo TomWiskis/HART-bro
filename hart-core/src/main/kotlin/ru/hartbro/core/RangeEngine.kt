@@ -42,9 +42,9 @@ class RangeEngine(private val scope:CoroutineScope,initial:MonitorConnection?,pr
             catch(e:Exception){mutable.update{it.copy(phase=RangePhase.RESULT,message="Чтение не выполнено: ${e.message}")}}
         }
     }
-    @Synchronized fun select(lower:String,upper:String) {
+    @Synchronized fun select(lower:String,upper:String,unitCode:Int=state.value.snapshot?.range?.unitCode ?: -1) {
         val before=state.value;if(before.phase!=RangePhase.FORM) return
-        val validation=RangeRules.validate(before.snapshot!!,lower,upper)
+        val validation=RangeRules.validate(before.snapshot!!,lower,upper,unitCode)
         mutable.update{it.copy(phase=if(validation.allowed)RangePhase.CONFIRM else RangePhase.FORM,requested=validation.range,validation=validation,
             message=if(validation.unchanged)"Новый диапазон совпадает с текущим. Запись не требуется." else validation.errors.joinToString("\n"))}
     }

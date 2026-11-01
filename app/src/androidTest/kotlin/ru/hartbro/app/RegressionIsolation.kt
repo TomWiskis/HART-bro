@@ -17,6 +17,7 @@ internal fun FieldRegressionApplication.stopRegressionOwners() {
     rangeMode = 0
     stopService(Intent(this, MonitoringService::class.java))
     await { controller.state.value.let { !it.serviceRunning && !it.active && !it.walkActive && !it.rangeOwned } }
+    controller.closeSensorDiagnostics()
     controller.closeRange()
     if (controller.state.value.monitor.startedAt != null) {
         controller.end()

@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -181,7 +182,6 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
     var endPrompt by remember { mutableStateOf(false) }
     var archiveId by rememberSaveable { mutableStateOf<String?>(null) }
     var clearHexPrompt by remember { mutableStateOf(false) }
-    var technical by remember { mutableStateOf(false) }
     var switchToWalk by remember { mutableStateOf(false) }
     var walkEnd by remember { mutableStateOf(false) }
     var monitorAfterWalk by remember { mutableStateOf(false) }
@@ -190,15 +190,18 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         else { c.requestWalk();if(!state.active) tab=0 }
     }
     val scroll = remember(tab, archiveId) { ScrollState(0) }
-    BackHandler(enabled = !state.rangeVisible && tab == 2 && archiveId != null) { archiveId = null }
+    BackHandler(enabled = !state.rangeVisible && !state.diagnosticVisible && tab == 2 && archiveId != null) { archiveId = null }
+    BackHandler(state.diagnosticVisible && !state.rangeVisible){c.closeSensorDiagnostics()}
     BackHandler(state.rangeVisible){c.closeRange()}
     val monitor = state.monitor
-    val decision = !state.rangeVisible && monitor.startedAt != null && monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE)
-    Scaffold(topBar = { TopAppBar(title = { Text("HART-бро ${BuildConfig.VERSION_NAME}") },
+    val decision = !state.rangeVisible && !state.diagnosticVisible && monitor.startedAt != null && monitor.phase in setOf(MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE)
+    Scaffold(topBar = { TopAppBar(title = { Text("HART-бро ${BuildConfig.VERSION_NAME}",maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleMedium) },
+        actions = { BluetoothBadge(state) },
         navigationIcon = { if(state.rangeVisible)TextButton(onClick=c::closeRange,modifier=Modifier.testTag("rangeBack")){Text("К прибору")}
+            else if(state.diagnosticVisible)TextButton(onClick=c::closeSensorDiagnostics,modifier=Modifier.testTag("diagnosticsBack")){Text("Назад")}
             else if (tab == 2 && archiveId != null) TextButton(onClick = { archiveId = null }, modifier = Modifier.testTag("archiveBack")) { Text("К списку") } }) },
         bottomBar = {
-            if(!state.rangeVisible) {
+            if(!state.rangeVisible && !state.diagnosticVisible) {
             if(state.walkActive || tab==4 && state.walk.book?.let { it.endedAt==null }==true) Surface(tonalElevation=3.dp) {
                 FlowRow(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=12.dp,vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     Button(onClick=c::saveWalk,enabled=state.walk.book?.rows?.isNotEmpty()==true,modifier=Modifier.testTag("saveWalk")){Text("Сохранить обход")}
@@ -220,20 +223,22 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if(state.rangeVisible) {
                 Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){RangeScreen(state,c,exportRange)}
+            } else if(state.diagnosticVisible) {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){SensorDiagnosticsScreen(state,c)}
             } else {
             PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                 listOf("Связь", "Монитор", "Журнал", "HEX", "Обход").forEachIndexed { i, text -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(text, maxLines = 1) }) }
             }
             Column(Modifier.fillMaxSize().testTag(if (tab == 2 && archiveId != null) "archiveScroll" else "sectionScroll").verticalScroll(scroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if(state.walkActive) state.walk.message else monitor.message, style = MaterialTheme.typography.titleMedium)
+                if(tab != 1) Text(if(state.walkActive) state.walk.message else monitor.message.takeUnless{it=="Ответ HART получен"} ?: "Мониторинг", style = MaterialTheme.typography.titleMedium)
                 state.notice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
                 if(state.range.busy)TextButton(onClick=c::showRangeResult){Text("Настройка диапазона: ${state.range.message}")}
                 if(state.rangeRecords.any{it.outcome==RangeOutcome.UNKNOWN || it.outcome==RangeOutcome.PENDING})TextButton(onClick=c::showRangeHistory){Text("Есть неподтверждённые операции диапазона — проверить чтением")}
                 if (state.diagnosticIncomplete) Text("HEX-журнал неполон: достигнут предел. Сохраните доступный TXT и очистите буфер.", color = MaterialTheme.colorScheme.error)
                 if (monitor.phase == MonitorPhase.CONNECTING) LinearProgressIndicator(Modifier.fillMaxWidth())
-                monitor.recovery?.let { RecoveryPanel(it) }
+                if(tab != 1) monitor.recovery?.let { RecoveryPanel(it) }
                 if (state.active && !state.walkActive && monitor.phase == MonitorPhase.ERROR && monitor.startedAt == null) {
-                    Text("Bluetooth: ${if (monitor.bluetoothConnected) "подключён" else "нет связи"}; датчик не идентифицирован")
+                    Text("Датчик не идентифицирован")
                     Button(onClick = c::retryIdentification, enabled = !state.rangeOwned, modifier = Modifier.testTag("retryIdentification")) { Text("Повторить опрос датчика") }
                 }
                 when (tab) {
@@ -265,47 +270,8 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         Text("В фоне работает видимая служба с уведомлением. Разрешите уведомления, чтобы получать запрос решения после потери связи. Android может остановить процесс; после принудительного завершения автоматического продолжения нет.", style = MaterialTheme.typography.bodySmall)
                     }
                     1 -> {
-                        if(state.walkActive) {
-                            Text("VIATOR занят обходом. Для мониторинга завершите ведомость.")
-                            Button(onClick={monitorAfterWalk=true;walkEnd=true}) { Text("Завершить обход и перейти к мониторингу…") }
-                        }
-                        Text("Bluetooth: ${if (monitor.bluetoothConnected) "подключён" else "нет связи"}")
-                        if (monitor.startedAt == null) {
-                            if (!monitor.bluetoothConnected) TextButton(onClick = { tab = 0 }) { Text("Перейти к подключению") }
-                        }
-                        TextButton(onClick = { technical = !technical }) { Text(if (technical) "Скрыть сведения" else "Сведения о приборе и справка") }
-                        monitor.identity?.let { d ->
-                            if(monitor.bluetoothConnected && monitor.phase in setOf(MonitorPhase.READY,MonitorPhase.MONITORING,MonitorPhase.PAUSED))Button(onClick={c.openRange()},enabled=!state.rangeOwned,modifier=Modifier.testTag("openRange")){Text("Настроить диапазон")}
-                            Text("${d.manufacturerDescription} · ID ${d.uniqueKey}")
-                            if (technical) Text("HART ${d.hartRevision}; ПО ${d.softwareRevision}; ревизия устройства ${d.deviceRevision}. График использует реальные значения, независимые шкалы несовместимых единиц и разрывы при пропусках. Нажмите обозначение серии для её выделения.")
-                        }
-                        monitor.startedAt?.let { Text("Начало: ${timeLabel(it.toEpochMilli())}") }
-                        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-                        LaunchedEffect(state.active) { while (state.active) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) } }
-                        monitor.startedAt?.let { Text("Длительность: ${((now - it.toEpochMilli()) / 1000).coerceAtLeast(0)} с") }
-                        val latest = monitor.latest
-                        if (latest == null) Text("Текущих достоверных измерений нет; прежние точки остаются в истории.")
-                        else {
-                            Text("Статус прибора 0x%02X: %s".format(latest.deviceStatus, HartStatus.deviceDescription(latest.deviceStatus)))
-                            latest.values.chunked(2).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { row.forEach { v ->
-                                Card(Modifier.weight(1f)) { Column(Modifier.padding(10.dp)) {
-                                    Text(v.slot, style = MaterialTheme.typography.titleMedium)
-                                    Text(if (v.plottable) "${v.value} ${v.unit}" else "Нет достоверного значения", style = if (v.slot == "PV") MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleLarge)
-                                    Text("${qualityText(v.quality)} · ${timeLabel(v.receivedAt.toEpochMilli())}")
-                                    if (technical) Text("Команда ${v.command}; единица HART ${v.unitCode}; код переменной ${v.variableCode ?: "не сообщён"}; классификация ${v.classification ?: "не сообщена"}; статус ${v.rawStatus?.let { "0x%02X".format(it) } ?: "не передан"}", style = MaterialTheme.typography.bodySmall)
-                                } }
-                            } } }
-                            if (technical) latest.loopCurrent?.let { Text("Снимок диагностики токового выхода по данным датчика: $it мА; ${latest.loopCurrentAt?.let { at -> timeLabel(at.toEpochMilli()) } ?: "время не сообщено"}. Это не измерение мультиметром.") }
-                            if (technical) latest.extendedStatus?.let { Text("Дополнительный статус: 0x%02X".format(it)) }
-                        }
-                        Text("Целевой интервал опроса")
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(1L, 2L, 5L, 10L).forEach { sec -> FilterChip(selected = monitor.periodMillis == sec * 1000, onClick = { c.period(sec * 1000) }, label = { Text("$sec с") }) }
-                        }
-                        if (monitor.startedAt != null) {
-                            key(monitor.startedAt) { MonitoringChart(c.history, null, monitor.revision, latest, monitor.configuration.range?.label ?: "Диапазон неизвестен") }
-                        }
-                        TextButton(onClick = { tab = 3 }) { Text("Открыть диагностику") }
+                        if(state.walkActive) Button(onClick={monitorAfterWalk=true;walkEnd=true}) { Text("Завершить обход и перейти к мониторингу…") }
+                        MonitorScreen(state,c)
                     }
                     4 -> WalkScreen(state,c,startWalk,{monitorAfterWalk=false;walkEnd=true},exportWalk)
                     2 -> JournalScreen(state, c, archiveId, { archiveId = it }, export)
@@ -365,12 +331,9 @@ internal fun qualityText(q: Quality) = when(q) {
 
 @Composable
 private fun RecoveryPanel(progress: RecoveryProgress) {
-    fun clock(ms: Long): String { val sec = (ms / 1000).coerceAtLeast(0); return "%02d:%02d".format(sec / 60, sec % 60) }
     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Связь потеряна", style = MaterialTheme.typography.titleMedium)
-        Text("Причина: ${when(progress.reason) { LossReason.BLUETOOTH -> "Bluetooth"; LossReason.HART -> "HART"; LossReason.UNKNOWN -> "неизвестно" }}")
-        Text("Прошло ${clock(progress.elapsedMillis)} · Осталось ${clock(progress.remainingMillis)}")
-        LinearProgressIndicator(progress = { progress.elapsedMillis / 60000f }, modifier = Modifier.fillMaxWidth())
+        Text("Переподключение · ${(progress.remainingMillis+999)/1000} с", style = MaterialTheme.typography.titleMedium)
+        Text("Причина: ${when(progress.reason) { LossReason.BLUETOOTH -> "потеря Bluetooth"; LossReason.HART -> "нет ответа HART"; LossReason.UNKNOWN -> "неизвестно" }}")
         Text("Попытка ${progress.attempt}: ${progress.lastAttempt}", style = MaterialTheme.typography.bodySmall)
     } }
 }

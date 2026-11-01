@@ -34,7 +34,7 @@ data class RecoveryProgress(val reason: LossReason, val startedMillis: Long, val
 }
 data class MonitorState(
     val phase: MonitorPhase = MonitorPhase.IDLE, val identity: DeviceIdentity? = null,
-    val latest: MeasurementBatch? = null, val bluetoothConnected: Boolean = false,
+    val latest: MeasurementBatch? = null, val lastKnown: MeasurementBatch? = null, val lastHartSuccess: Instant? = null, val bluetoothConnected: Boolean = false,
     val message: String = "Сессия не начата", val periodMillis: Long = 2000,
     val configuration: ConfigurationSnapshot = ConfigurationSnapshot(),
     val startedAt: Instant? = null, val revision: Long = 0, val recovery: RecoveryProgress? = null,
@@ -66,7 +66,8 @@ class MonitoringEngine(
     @Volatile private var paused = false
     @Volatile private var startingSession = false
     private fun publish(phase: MonitorPhase, message: String, latest: MeasurementBatch? = null) {
-        mutableState.update { it.copy(phase = phase, message = message, latest = latest,
+        mutableState.update { it.copy(phase = phase, message = message, latest = latest, lastKnown = latest ?: it.lastKnown,
+            lastHartSuccess = latest?.receivedAt ?: it.lastHartSuccess,
             bluetoothConnected = connection?.isOpen == true, revision = it.revision + 1,
             recovery = if (phase == MonitorPhase.RECOVERING) it.recovery else null) }
     }
@@ -86,7 +87,7 @@ class MonitoringEngine(
                     publish(MonitorPhase.CONNECTING, "Bluetooth подключён. Идентификация HART…")
                     connection!!.identify() to connection!!.configuration()
                 }
-                mutableState.update { it.copy(identity = identity, configuration = config) }
+                mutableState.update { it.copy(identity = identity, configuration = config, lastHartSuccess = wallTime()) }
                 if (!automaticSession) {
                     publish(MonitorPhase.READY, "Прибор определён. Можно начать сессию")
                     sessionStarts.receive()
@@ -280,7 +281,7 @@ class MonitoringEngine(
         if(verification!=null && same) {
             val current=state.value.configuration
             val updated=current.copy(parameters=current.parameters+verification.configuration.parameters,responses=current.responses.filterNot{it.command==15}+verification.configuration.responses)
-            mutableState.update { it.copy(configuration=updated) };sink.configuration(updated)
+            mutableState.update { it.copy(configuration=updated, lastHartSuccess=verification.readAt) };sink.configuration(updated)
         }
         if(state.value.startedAt!=null) sink.event(wallTime(),message)
         paused=wasPaused || !resume || !same
@@ -300,7 +301,7 @@ class MonitoringEngine(
         paused = false;startingSession=false
         while (sessionStarts.tryReceive().isSuccess) { /* no queued duplicate starts */ }
         if (connection?.isOpen != true) closeConnection()
-        mutableState.update { it.copy(startedAt = null, latest = null, recovery = null) }
+        mutableState.update { it.copy(startedAt = null, latest = null, lastKnown = null, recovery = null) }
         publish(if (connection != null) MonitorPhase.READY else MonitorPhase.IDLE,
             if (connection != null) "Сессия завершена. Bluetooth подключён" else "Сессия завершена. Подключите коммуникатор")
     }

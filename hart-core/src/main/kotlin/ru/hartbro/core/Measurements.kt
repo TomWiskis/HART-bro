@@ -99,7 +99,7 @@ class MeasurementReader(private var client: HartClient, private val identity: De
         }
         report("Назначения: ${assignments ?: "не сообщены"}; классификации: ${classifications ?: "не сообщены"}")
         discovered = true
-        return pv
+        return pv.copy(loopCurrent = lastLoopCurrent?.first, loopCurrentAt = lastLoopCurrent?.second)
     }
     private suspend fun optional(command: ReadCommand, use: (HartReply) -> Unit) {
         if (command in disabled) return
@@ -116,6 +116,11 @@ class MeasurementReader(private var client: HartClient, private val identity: De
                 val batch = MeasurementDecoder.withStatus(client.read(identity.address, ReadCommand.VARIABLES_WITH_STATUS,
                     requested.map { it.toByte() }.toByteArray()), requested, identity.hartRevision)
                 timeouts.remove(ReadCommand.VARIABLES_WITH_STATUS)
+                lastLoopCurrent = null
+                optional(ReadCommand.DYNAMIC_VARIABLES) {
+                    val loop = MeasurementDecoder.dynamic(it)
+                    lastLoopCurrent = loop.loopCurrent?.let { value -> value to loop.receivedAt }
+                }
                 return batch.copy(loopCurrent = lastLoopCurrent?.first, loopCurrentAt = lastLoopCurrent?.second)
             } catch (e: HartResponseException) {
                 timeouts.remove(ReadCommand.VARIABLES_WITH_STATUS)

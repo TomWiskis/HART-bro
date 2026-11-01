@@ -37,6 +37,16 @@ private class ReadFixture(private val responses: Map<Int, ByteArray>, private va
 }
 
 class MeasurementsTest {
+    @Test fun command9RefreshesActualLoopCurrentInsteadOfReusingInitialSnapshot() = runTest {
+        val records=(246..249).map{byteArrayOf(it.toByte(),0x41,12,0x3f,0x80.toByte(),0,0,0xc0.toByte())}.fold(byteArrayOf()){a,b->a+b}
+        val data=mutableMapOf(1 to hex("0C 3F 80 00 00"),3 to hex("40 80 00 00 0C 3F 80 00 00"),9 to (byteArrayOf(0)+records+ByteArray(4)))
+        val t=ReadFixture(data);val reader=MeasurementReader(HartClient(t),metran02)
+        assertEquals(4f,reader.discover().loopCurrent!!,0f)
+        data[3]=hex("41 00 00 00 0C 3F 80 00 00")
+        val next=reader.sample()
+        assertEquals(8f,next.loopCurrent!!,0f);assertEquals(1f,next.values.first().value,0f)
+        assertEquals(listOf(9,3),t.commands.takeLast(2));assertNotNull(next.loopCurrentAt)
+    }
     @Test fun realColdStartMetranFrameKeepsStatusAndIdentity() {
         val frame = (HartDecoder().accept(hex("FF FF FF FF 06 80 00 18 00 20 FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01 45")).single() as DecodeEvent.Frame).value
         assertEquals(0x20, frame.payload[1].u8()); assertEquals("9972-5FCA7F", DeviceIdentity.parse(frame.payload.drop(2).toByteArray()).uniqueKey)

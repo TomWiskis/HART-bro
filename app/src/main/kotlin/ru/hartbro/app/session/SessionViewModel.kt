@@ -23,7 +23,12 @@ import ru.hartbro.core.*
 
 enum class ConnectionMode { MONITOR, WALK }
 data class Communicator(val name: String, val address: String, val likelyViator: Boolean)
+data class SensorDiagnostics(val identity: DeviceIdentity, val configuration: ConfigurationSnapshot,
+    val measurements: MeasurementBatch?, val range: RangeSnapshot? = null, val errors: List<String> = emptyList())
 data class SessionState(
+    val communicator: Communicator? = null, val chartViewport: ChartViewport = ChartViewport(),
+    val diagnosticVisible: Boolean = false, val diagnosticLoading: Boolean = false,
+    val sensorDiagnostics: SensorDiagnostics? = null, val diagnosticError: String? = null,
     val devices: List<Communicator> = emptyList(), val bluetoothAvailable: Boolean = true,
     val bluetoothEnabled: Boolean = false, val permissionGranted: Boolean = false,
     val pendingConnection: Communicator? = null, val monitor: MonitorState = MonitorState(),
@@ -32,7 +37,7 @@ data class SessionState(
     val active: Boolean = false, val detailedDiagnostics: Boolean = false,
     val diagnosticIncomplete: Boolean = false, val serviceRunning: Boolean = false,
     val requestedMode: ConnectionMode = ConnectionMode.MONITOR, val walkActive: Boolean = false,
-    val range:RangeState=RangeState(),val rangeVisible:Boolean=false,val rangeOwned:Boolean=false,val rangeRecords:List<RangeRecord> = emptyList(),
+    val rangeTransportOpen:Boolean=false, val range:RangeState=RangeState(),val rangeVisible:Boolean=false,val rangeOwned:Boolean=false,val rangeRecords:List<RangeRecord> = emptyList(),
     val walk: WalkState = WalkState(), val savedWalks: List<WalkBook> = emptyList(), val walkDraftAvailable: Boolean = false,
 )
 
@@ -139,7 +144,7 @@ class SessionController(private val app: Application, private val connectionFact
         if (rangeLeaseActive || engine != null || walkEngine != null) { initial?.close();return }
         communicator = Communicator(name,address,true)
         initial?.prepareMonitoring()
-        mutableState.update { it.copy(active = true, notice = null) }
+        mutableState.update { it.copy(active = true, notice = null, communicator = communicator, sensorDiagnostics = null) }
         lastTx = null; lastRx = null; lastMeasurement = null; socketState = "подготовка"
         event("Подтверждено подключение к $name ($address)")
         val sink = object : SessionSink {
@@ -180,6 +185,9 @@ class SessionController(private val app: Application, private val connectionFact
         socketState = "подключение"
         val transport = BluetoothSppTransport.connect(device) { text -> socketState=text;append(DiagnosticEntry(Instant.now(), "BLUETOOTH", text)) }
         socketState = "RFCOMM открыт"
+        val actualName=device.name ?: communicator?.name ?: "VIATOR"
+        communicator=Communicator(actualName,address,actualName.contains("viator",true))
+        mutableState.update{it.copy(communicator=communicator)}
         return object : MonitorConnection {
             private lateinit var identity: DeviceIdentity
             private var client = HartClient(transport, ::append, readAttempts = 1)
@@ -216,7 +224,49 @@ class SessionController(private val app: Application, private val connectionFact
     fun retryIdentification() { scope.launch { archiveActions.withLock {
         if (!rangeLeaseActive && !state.value.walkActive) engine?.retryIdentification()
     } } }
-    fun beginSession() { scope.launch { archiveActions.withLock { if (rangeLeaseActive || state.value.walkActive) { notice("Сначала завершите настройку или обход");return@withLock };engine?.startSession() ?: notice("Сначала подключите коммуникатор на вкладке «Связь»") } } }
+    fun chartViewport(value: ChartViewport) { mutableState.update { it.copy(chartViewport = value) } }
+    fun closeSensorDiagnostics() { mutableState.update { it.copy(diagnosticVisible = false) } }
+    fun openSensorDiagnostics() {
+        if (state.value.diagnosticLoading) return
+        mutableState.update { it.copy(diagnosticVisible = true, diagnosticLoading = true, sensorDiagnostics = null, diagnosticError = null) }
+        scope.launch { archiveActions.withLock {
+            var conn: MonitorConnection? = null
+            var acquired = false
+            var verification: RangeVerification? = null
+            var different = false
+            try {
+                check(!rangeLeaseActive && !state.value.walkActive) { "Сначала завершите текущую операцию" }
+                val owner = engine ?: error("Сначала подключите прибор")
+                val expected = owner.state.value.identity ?: error("Сначала выполните идентификацию")
+                conn = owner.acquireConfiguration(); acquired = true
+                check(conn?.isOpen == true) { "Bluetooth отключён" }
+                val identity = conn!!.identify()
+                if(passportKey(identity) != passportKey(expected)) { different = true; throw RangeDeviceChanged(expected, identity) }
+                val config = conn!!.configuration()
+                val errors = mutableListOf<String>()
+                val snapshot = try { conn!!.rangeSnapshot() } catch(e: CancellationException) { throw e }
+                    catch(e: IOException) { throw e } catch(e: Exception) { errors += "Диапазон: ${e.message}"; null }
+                if(snapshot != null && passportKey(snapshot.identity) != passportKey(expected)) { different = true; throw RangeDeviceChanged(expected,snapshot.identity) }
+                val measurements = try { conn!!.sample() } catch(e: CancellationException) { throw e }
+                    catch(e: IOException) { throw e } catch(e: Exception) { errors += "Измерения: ${e.message}"; null }
+                val updated = config.copy(parameters = config.parameters + snapshot?.configuration?.parameters.orEmpty())
+                if(updated.range != null) verification = RangeVerification(identity, updated)
+                mutableState.update { it.copy(sensorDiagnostics = SensorDiagnostics(identity, updated, measurements, snapshot, errors)) }
+            } catch(e: CancellationException) { throw e }
+            catch(e: Exception) { mutableState.update { it.copy(diagnosticError = e.message ?: "Чтение диагностики не выполнено") } }
+            finally {
+                if(acquired) engine?.releaseConfiguration(conn, verification, !different && conn?.isOpen == true,
+                    if(different) "Обнаружен другой прибор" else "Диагностическое чтение завершено", different)
+                mutableState.update { it.copy(diagnosticLoading = false) }
+            }
+        } }
+    }
+    fun deleteRangeRecord(id: String? = null) { scope.launch { archiveActions.withLock {
+        if(rangeLeaseActive || state.value.range.busy) { notice("Дождитесь завершения операции"); return@withLock }
+        runCatching { if(id == null) rangeJournal.deleteAll() else rangeJournal.delete(id) }
+            .onSuccess { refreshRangeRecords() }.onFailure { notice("Удаление: ${it.message}") }
+    } } }
+    fun beginSession() { scope.launch { archiveActions.withLock { if (rangeLeaseActive || state.value.walkActive) { notice("Сначала завершите настройку или обход");return@withLock };if(engine?.state?.value?.phase == MonitorPhase.READY) chartViewport(ChartViewport());engine?.startSession() ?: notice("Сначала подключите коммуникатор на вкладке «Связь»") } } }
     fun pause(value: Boolean) { scope.launch { archiveActions.withLock { if(!rangeLeaseActive)engine?.pause(value) } } }
     fun period(millis: Long) { engine?.setPeriod(millis) }
     fun save(finish: Boolean = false) {
@@ -253,7 +303,7 @@ class SessionController(private val app: Application, private val connectionFact
     private suspend fun disconnectNow() {
         engine?.stop("Явное отключение / завершение службы"); observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
         app.stopService(Intent(app, MonitoringService::class.java))
-        mutableState.update { it.copy(active = false, monitor = MonitorState()) }
+        mutableState.update { it.copy(active = false, communicator = null, monitor = MonitorState(), diagnosticVisible = false) }
     }
     fun serviceDestroyed(lease: Long) { scope.launch { archiveActions.withLock {
         if (lease != serviceLease) { serviceLifecycle("Устаревший onDestroy lease=$lease; текущий=$serviceLease; сессия сохранена"); return@withLock }
@@ -304,7 +354,7 @@ class SessionController(private val app: Application, private val connectionFact
             })
             rangeEngine=worker
             mutableState.update{it.copy(rangeOwned=true,rangeVisible=true,range=worker.state.value,notice=null)}
-            rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r)}}}
+            rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r,rangeTransportOpen=worker.connection?.isOpen==true)}}}
             if(record==null) worker.open() else worker.verifyOnly(record)
         } catch(e:Exception) {
             if(rangeLeaseActive)releaseRangeLease(null,rangeEngine?.connection,false,"Настройка не открыта: ${e.message}")
@@ -330,9 +380,10 @@ class SessionController(private val app: Application, private val connectionFact
                 val verification=r?.verification ?: r?.snapshot?.let{RangeVerification(it.identity,it.configuration)}
                 releaseRangeLease(verification,rangeEngine?.connection,r?.otherDevice==null && r?.record?.outcome !in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE),"Возврат от настройки диапазона без повторной записи")
             }
+            if(state.value.diagnosticVisible) openSensorDiagnostics()
         }}
     }
-    fun selectRange(lower:String,upper:String){rangeEngine?.select(lower,upper)}
+    fun selectRange(lower:String,upper:String,unitCode:Int=state.value.range.snapshot?.range?.unitCode ?: -1){rangeEngine?.select(lower,upper,unitCode)}
     fun cancelRangeConfirmation(){rangeEngine?.cancelConfirmation()}
     fun confirmRange(token:String){if(rangeLeaseActive)rangeEngine?.confirm(token)}
     fun moreRangeRecords(){rangeRecordLimit+=100;refreshRangeRecords()}
@@ -364,7 +415,7 @@ class SessionController(private val app: Application, private val connectionFact
     } } }
     private fun startWalkNow(selected:Communicator,initial:MonitorConnection?=null) {
         communicator=selected
-        mutableState.update { it.copy(active=true,walkActive=true,requestedMode=ConnectionMode.WALK,monitor=MonitorState(),notice=null) }
+        mutableState.update { it.copy(communicator=selected,active=true,walkActive=true,requestedMode=ConnectionMode.WALK,monitor=MonitorState(),notice=null) }
         event("Обход начат: ${selected.name} (${selected.address}); только чтение; сохранение ведомости вручную")
         val worker=WalkEngine(scope,{createConnection(selected.address)},walkCatalog,
             changed={ _ -> walkStore.writeDraft(walkCatalog::snapshot);mutableState.update { it.copy(walkDraftAvailable=true) } }, diagnostic=::event)

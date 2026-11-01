@@ -200,8 +200,9 @@ class SessionHistory(private val working: File, private val archives: File, priv
         val i = index(file)
         return i.info.startedAt to if (id == null) i.cursor.lastMeasurement else i.cursor.end
     }
-    @Synchronized fun window(id: String?, viewport: ChartViewport): HistoryWindow? {
-        val domain = bounds(id) ?: return null
+    @Synchronized fun window(id: String?, viewport: ChartViewport, nowMillis: Long? = null): HistoryWindow? {
+        val stored = bounds(id) ?: return null
+        val domain = stored.first to if (id == null && nowMillis != null) maxOf(stored.second, nowMillis) else stored.second
         val range = viewport.bounds(domain.first, domain.second)
         val view = view(id, range.first, range.last) ?: return null
         return HistoryWindow(view, range, domain.first..domain.second)

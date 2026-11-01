@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
@@ -28,28 +29,32 @@ private val seriesColors = listOf(Color(0xFF1976D2), Color(0xFFD84315), Color(0x
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revision: Long, latest: MeasurementBatch? = null, configuredRange: String? = null) {
+internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revision: Long, latest: MeasurementBatch? = null, configuredRange: String? = null, periodMillis: Long = 2000, liveViewport: ChartViewport? = null, onViewport: (ChartViewport) -> Unit = {}) {
     var loaded by remember(archiveId) { mutableStateOf<HistoryWindow?>(null) }
     var error by remember(archiveId) { mutableStateOf<String?>(null) }
-    var viewport by remember(archiveId) { mutableStateOf(if (archiveId == null) ChartViewport() else ChartViewport(Long.MAX_VALUE, following = false)) }
+    val viewportSaver = listSaver<ChartViewport, Long>(save = { listOf(it.spanMillis, it.endMillis ?: Long.MIN_VALUE, if(it.following) 1L else 0L) },
+        restore = { ChartViewport(it[0], it[1].takeUnless { value -> value == Long.MIN_VALUE }, it[2] == 1L) })
+    var viewport by rememberSaveable(archiveId, stateSaver = viewportSaver) { mutableStateOf(if (archiveId == null) liveViewport ?: ChartViewport() else ChartViewport(Long.MAX_VALUE, following = false)) }
+    fun changeViewport(value: ChartViewport) { viewport = value; if(archiveId == null) onViewport(value) }
     var hidden by remember(archiveId) { mutableStateOf(setOf<String>()) }
     var highlighted by remember(archiveId) { mutableStateOf("PV") }
     var selectedTime by remember(archiveId) { mutableStateOf<Long?>(null) }
     var eventsExpanded by remember { mutableStateOf(false) }
     val currentRevision by rememberUpdatedState(revision)
     LaunchedEffect(history, archiveId, viewport) {
-        snapshotFlow { currentRevision }.conflate().collect {
+        while (isActive) {
+            currentRevision // Observe changes without coupling the viewport to the data domain.
             try {
-                loaded = withContext(Dispatchers.IO) { history.window(archiveId, viewport) }
+                loaded = withContext(Dispatchers.IO) { history.window(archiveId, viewport, if(archiveId == null) System.currentTimeMillis() else null) }
                 error = null
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) { error = "Ошибка чтения истории: ${e.message}" }
-            delay(250) // Bound UI reads; every received sample is still written by the engine.
+            delay(1000) // Bound UI reads; every received sample is still written by the engine.
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text("Общий график", style = MaterialTheme.typography.titleMedium)
-        Text(configuredRange ?: loaded?.view?.info?.configuration?.range?.label ?: "Диапазон неизвестен", style = MaterialTheme.typography.labelSmall)
+        Text("Общий график", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Text(configuredRange ?: loaded?.view?.info?.configuration?.range?.label ?: "Диапазон недоступен", style = MaterialTheme.typography.labelSmall)
     }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     val model = loaded
@@ -58,10 +63,10 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
     val start = model.domain.first; val end = model.domain.last
     val widthMillis = (hi - lo).coerceAtLeast(1)
     if (archiveId != null) Text("${data.info.deviceKey} · ${data.info.manufacturer}\n${timeLabel(data.info.startedAt)}", style = MaterialTheme.typography.bodySmall)
-    val visible = data.points.filter { it.measurement.slot !in hidden }
+    val visible = data.points.filter { it.measurement.slot !in hidden && (archiveId != null || it.measurement.slot == "PV") }
     val groups = visible.groupBy { it.measurement.unitCode }.toSortedMap()
     val axes = groups.mapValues { ChartAxes.numeric(it.value.map { p -> p.measurement.value }) }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    if (archiveId != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         MeasurementDecoder.slots.forEachIndexed { i, slot ->
             val value = if (archiveId == null) latest?.values?.find { it.slot == slot } else data.points.lastOrNull { it.measurement.slot == slot }?.measurement
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -75,11 +80,15 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
     if (groups.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         groups.keys.forEachIndexed { i, unit -> Text("Y${i + 1}: ${HartUnits.find(unit)?.symbol ?: "HART $unit"}", style = MaterialTheme.typography.bodySmall) }
     } else groups.keys.firstOrNull()?.let { Text("Y: ${HartUnits.find(it)?.symbol ?: "HART $it"}", style = MaterialTheme.typography.bodySmall) }
+    val gestureStart by rememberUpdatedState(start)
+    val gestureEnd by rememberUpdatedState(end)
+    val gestureViewport by rememberUpdatedState(viewport)
     val grid = MaterialTheme.colorScheme.outlineVariant; val foreground = MaterialTheme.colorScheme.onSurface
     Canvas(Modifier.fillMaxWidth().height(230.dp).testTag("measurementChart")
-        .pointerInput(lo, hi, start, end) { detectTransformGestures { _, offset, zoom, _ ->
+        .pointerInput(Unit) { detectTransformGestures { _, offset, zoom, _ ->
             val pan = if (abs(zoom - 1f) > 0.001f) 0f else offset.x / size.width.coerceAtLeast(1)
-            viewport = viewport.transform(start, end, zoom, pan)
+            val shifted = gestureViewport.transform(gestureStart, gestureEnd, 1f, pan)
+            changeViewport(if (!shifted.following && gestureEnd - shifted.bounds(gestureStart,gestureEnd).last <= periodMillis.coerceAtLeast(1000)) shifted.follow() else shifted)
         } }
         .pointerInput(visible, lo, hi) { detectTapGestures { offset ->
             val left = ((groups.size + 1) / 2 * 49 + 6).dp.toPx()
@@ -135,15 +144,15 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
         }
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton(onClick = { viewport = viewport.transform(start, end, 2f, 0f) }) { Text("Масштаб +") }
-        OutlinedButton(onClick = { viewport = viewport.transform(start, end, 0.5f, 0f) }) { Text("Масштаб −") }
-        FilterChip(selected = viewport.following, onClick = { viewport = if (viewport.following) viewport.copy(following = false, endMillis = hi) else viewport.follow() }, label = { Text("Следовать") })
-        OutlinedButton(onClick = { viewport = viewport.all(archiveId == null) }) { Text("Вся сессия") }
+        OutlinedButton(onClick = { changeViewport(viewport.transform(start, end, 2f, 0f)) }) { Text("Масштаб +") }
+        OutlinedButton(onClick = { changeViewport(viewport.transform(start, end, 0.5f, 0f)) }) { Text("Масштаб −") }
+        FilterChip(modifier = Modifier.testTag("chartFollow"), selected = viewport.following, onClick = { changeViewport(if (viewport.following) viewport.copy(following = false, endMillis = hi) else viewport.follow()) }, label = { Text("Следовать") })
+        if (archiveId != null) OutlinedButton(onClick = { changeViewport(viewport.all(false)) }) { Text("Вся сессия") }
     }
     Slider(value = if (end > start) ((hi - start).toDouble() / (end - start)).toFloat().coerceIn(0f, 1f) else 1f,
-        enabled = end > start && viewport.spanMillis < end - start,
-        onValueChange = { viewport = viewport.seek(start, end, it) })
-    Text("${ChartAxes.timeLabel(lo, widthMillis)} — ${ChartAxes.timeLabel(hi, widthMillis)}", style = MaterialTheme.typography.bodySmall)
+        modifier = Modifier.testTag("chartSeek"), enabled = end > start,
+        onValueChange = { changeViewport(viewport.seek(start, end, it, periodMillis.coerceAtLeast(1000))) })
+    Text("${ChartAxes.timeLabel(lo, widthMillis)} — ${ChartAxes.timeLabel(hi, widthMillis)} · ${viewport.spanMillis / 1000} с", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chartWindow"))
     TextButton(onClick = { eventsExpanded = !eventsExpanded }) { Text(if (eventsExpanded) "Скрыть события" else "События сессии") }
     if (eventsExpanded) data.events.forEach { (at, text) -> Text("${timeLabel(at)} · $text", style = MaterialTheme.typography.bodySmall) }
 }

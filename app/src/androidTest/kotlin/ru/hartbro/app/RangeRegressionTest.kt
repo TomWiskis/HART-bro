@@ -73,6 +73,8 @@ class RangeRegressionTest {
         connect(scenario)
         if(session){c.beginSession();waitFor{c.state.value.monitor.latest!=null};c.period(1000)}
         ui.onNodeWithText("Монитор",useUnmergedTree=true).performScrollTo().performClick()
+        ui.onNodeWithTag("openDiagnostics").performScrollTo().performClick()
+        waitFor{!c.state.value.diagnosticLoading && c.state.value.sensorDiagnostics!=null}
         openForm{ui.onNodeWithTag("openRange").performScrollTo().performClick()}
     }
     private fun chooseTen(){ui.onNodeWithTag("rangeUpper").performScrollTo().performTextReplacement("10");ui.onNodeWithTag("rangeSet").performScrollTo().performClick();waitFor{c.state.value.range.phase==RangePhase.CONFIRM}}

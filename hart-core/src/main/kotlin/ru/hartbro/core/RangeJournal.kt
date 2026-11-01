@@ -44,6 +44,18 @@ class RangeJournal(private val directory:File) {
             Files.move(temp.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)
         } finally {temp.delete()}
     }
+    @Synchronized fun delete(id: String) {
+        val target = file(id)
+        if (!target.exists()) return
+        val record = read(target)
+        check(record.stage == WriteStage.FINISHED) { "Нельзя удалить выполняемую операцию" }
+        check(target.delete()) { "Не удалось удалить запись" }
+    }
+    @Synchronized fun deleteAll() {
+        val files = directory.listFiles()?.filter { it.extension == "range" }.orEmpty()
+        check(files.all { read(it).stage == WriteStage.FINISHED }) { "Дождитесь завершения операции" }
+        files.forEach { check(it.delete()) { "Не удалось удалить запись" } }
+    }
     @Synchronized fun load(id:String)=read(file(id))
     @Synchronized fun list(limit:Int=100):List<RangeRecord> = directory.listFiles()?.filter{it.extension=="range"}?.sortedByDescending{it.lastModified()}?.take(limit)?.map(::read).orEmpty().sortedByDescending{it.time}
     @Synchronized fun recoverInterrupted():List<RangeRecord> {

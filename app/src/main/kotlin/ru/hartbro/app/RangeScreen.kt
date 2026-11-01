@@ -6,6 +6,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.*
+import androidx.compose.foundation.clickable
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -20,39 +29,58 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
     val r=state.range
     Text("Настройка диапазона",style=MaterialTheme.typography.titleLarge)
     Text(r.message,modifier=Modifier.testTag("rangeStatus"))
-    if(r.busy) {LinearProgressIndicator(Modifier.fillMaxWidth());r.secondsLeft?.let{Text("Проверка / восстановление: до $it с")}}
+    if(r.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+    if(r.phase==RangePhase.RECOVERING)r.secondsLeft?.let{Text("Переподключение · $it с")}
     if(r.phase in setOf(RangePhase.READING,RangePhase.PRECHECK))OutlinedButton(onClick=c::closeRange){Text("Отменить подготовку")}
     state.notice?.let{Text(it,color=MaterialTheme.colorScheme.primary)}
     r.snapshot?.let { snapshot ->
         val d=snapshot.identity
-        Text("${d.manufacturerDescription}\n${PassportProfiles().model(d)}\nDevice Type 0x%04X · Device ID %06X · HART ${d.hartRevision}".format(d.deviceType,d.deviceId))
+        Text("${d.manufacturerDescription}\nМодель: ${PassportProfiles().find(d)?.model(d) ?: "не определена"}\nDevice Type 0x%04X · Device ID %06X · HART ${d.hartRevision}".format(d.deviceType,d.deviceId))
         Text("TAG: ${snapshot.tag ?: "Не указан"}")
-        Text("Bluetooth: ${if(state.monitor.bluetoothConnected || state.walk.bluetoothConnected) "подключён" else "проверяется"}; HART: параметры прочитаны ${snapshot.readAt}",style=MaterialTheme.typography.bodySmall)
         Text("Текущий диапазон: ${snapshot.range.label}",modifier=Modifier.testTag("rangeCurrent"))
         val sensor=snapshot.sensor
         if(sensor?.lowerLimit!=null && sensor.upperLimit!=null) Text("Пределы сенсора: ${ConfiguredRange(sensor.lowerLimit!!,sensor.upperLimit!!,sensor.unitCode).label}")
         else Text("Пределы сенсора не получены. Проверка физических ограничений недоступна.")
         Text("Минимальный диапазон: ${sensor?.minimumSpan?.takeIf{it>0}?.let{"${it.toString().replace('.',',')} ${rangeUnit(sensor.unitCode)}"} ?: "не получен"}")
-        Text("Защита записи: ${when(snapshot.writeProtected){true->"включена";false->"не включена по данным команды 15";null->"неизвестна"}}")
+        Text("Защита записи: ${when(snapshot.writeProtected){true->"включена";false->"отключена";null->"неизвестна"}}")
         if(r.phase==RangePhase.FORM) {
-            var lower by rememberSaveable(r.token){mutableStateOf(snapshot.range.lower.toString())}
-            var upper by rememberSaveable(r.token){mutableStateOf(snapshot.range.upper.toString())}
-            val validation=RangeRules.validate(snapshot,lower,upper)
-            OutlinedTextField(lower,{lower=it},label={Text("Нижняя граница диапазона")},suffix={Text(rangeUnit(snapshot.range.unitCode))},singleLine=true,
-                keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),leadingIcon={TextButton(onClick={lower=if(lower.startsWith('-'))lower.drop(1) else "-$lower"}){Text("±")}},modifier=Modifier.fillMaxWidth().testTag("rangeLower"))
-            OutlinedTextField(upper,{upper=it},label={Text("Верхняя граница диапазона")},suffix={Text(rangeUnit(snapshot.range.unitCode))},singleLine=true,
-                keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),leadingIcon={TextButton(onClick={upper=if(upper.startsWith('-'))upper.drop(1) else "-$upper"}){Text("±")}},modifier=Modifier.fillMaxWidth().testTag("rangeUpper"))
+            var lower by rememberSaveable(r.token,stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue(snapshot.range.lower.toString()))}
+            var upper by rememberSaveable(r.token,stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue(snapshot.range.upper.toString()))}
+            var unit by rememberSaveable(r.token){mutableIntStateOf(snapshot.range.unitCode)}
+            var unitsOpen by remember{mutableStateOf(false)}
+            var lowerInitial by rememberSaveable(r.token){mutableStateOf(true)}
+            var upperInitial by rememberSaveable(r.token){mutableStateOf(true)}
+            val validation=RangeRules.validate(snapshot,lower.text,upper.text,unit)
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                OutlinedTextField(lower,{lower=it},label={Text("Низ")},singleLine=true,textStyle=MaterialTheme.typography.bodyMedium,
+                    keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.weight(1f).testTag("rangeLower").onFocusChanged{if(it.isFocused && lowerInitial){lower=lower.copy(selection=TextRange(0,lower.text.length));lowerInitial=false}})
+                Text("—")
+                OutlinedTextField(upper,{upper=it},label={Text("Верх")},singleLine=true,textStyle=MaterialTheme.typography.bodyMedium,
+                    keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.weight(1f).testTag("rangeUpper").onFocusChanged{if(it.isFocused && upperInitial){upper=upper.copy(selection=TextRange(0,upper.text.length));upperInitial=false}})
+                Box {
+                    TextButton(onClick={unitsOpen=true},modifier=Modifier.widthIn(max=90.dp).testTag("rangeUnits")){Text("${rangeUnit(unit)} ▾")}
+                    DropdownMenu(expanded=unitsOpen,onDismissRequest={unitsOpen=false}) {
+                        snapshot.writableUnits.sorted().forEach { target -> DropdownMenuItem(text={Text(rangeUnit(target))},onClick={
+                            if(target!=unit) runCatching { convertRange(ConfiguredRange(RangeRules.parse(lower.text),RangeRules.parse(upper.text),unit),target) }
+                                .onSuccess{lower=TextFieldValue(it.lower.toString());upper=TextFieldValue(it.upper.toString());unit=target}
+                                .onFailure{c.notice(it.message ?: "Преобразование недоступно")}
+                            unitsOpen=false
+                        }) }
+                    }
+                }
+            }
+            if(snapshot.writableUnits.size==1)Text("Поддержка записи других единиц этим прибором не подтверждена. Сохраняется текущая единица.",style=MaterialTheme.typography.bodySmall)
             validation.errors.forEach{Text(it,color=MaterialTheme.colorScheme.error)}
             validation.warnings.forEach{Text(it,style=MaterialTheme.typography.bodySmall)}
             if(validation.unchanged)Text("Новый диапазон совпадает с текущим. Запись не требуется.")
-            Button(onClick={c.selectRange(lower,upper)},enabled=validation.allowed,modifier=Modifier.testTag("rangeSet")){Text("Установить")}
+            Button(onClick={c.selectRange(lower.text,upper.text,unit)},enabled=validation.allowed,modifier=Modifier.testTag("rangeSet")){Text("Установить")}
         }
     }
     if(r.phase==RangePhase.RESULT) {
         r.record?.let { record ->
             Text("До: ${record.original.label}\nЗапрошено: ${record.requested.label}\nОтвет 35: ${record.echoed?.label ?: "не получен / не декодирован"}\nФактически (15): ${record.actual?.label ?: "не подтверждено"}",modifier=Modifier.testTag("rangeResult"))
             record.responseCode?.let{Text("35: $it — ${RangeResponseCodes.description(it)}")}
-            record.deviceStatus?.let{Text("Статус 0x%02X: ${HartStatus.deviceDescription(it)}".format(it))}
+            record.deviceStatus?.let{Text("Статус: ${HartStatus.deviceDescription(it)}")}
             record.errors.forEach{Text(it,style=MaterialTheme.typography.bodySmall)}
             OutlinedButton(onClick={c.openRange(record.id)},modifier=Modifier.testTag("rangeVerify")){Text("Проверить фактический диапазон чтением")}
             TextButton(onClick={export(record.id)}){Text("Сохранить операцию в TXT")}
@@ -64,15 +92,34 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
     HorizontalDivider();Text("Журнал операций настройки",style=MaterialTheme.typography.titleMedium)
     if(state.rangeRecords.isEmpty())Text("Операций записи пока нет")
     var details by rememberSaveable{mutableStateOf<String?>(null)}
-    state.rangeRecords.forEach { record ->Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
-        Text("${record.time} · ${record.identity.uniqueKey} · ${record.tag ?: "TAG не указан"}")
-        Text("${record.original.label} → ${record.requested.label}")
-        Text(RangeEngine.resultText(record))
-        TextButton(onClick={details=if(details==record.id)null else record.id}){Text("Технические сведения")}
-        if(details==record.id)Text(record.text(),fontFamily=FontFamily.Monospace,style=MaterialTheme.typography.bodySmall)
-        TextButton(onClick={export(record.id)}){Text("Сохранить TXT")}
-        if(record.outcome in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE))TextButton(onClick={c.openRange(record.id)},enabled=!r.busy){Text("Проверить чтением")}
-    } } }
+    var deleteId by remember{mutableStateOf<String?>(null)}
+    var clearAll by remember{mutableStateOf(false)}
+    state.rangeRecords.forEach { record ->
+        val succeeded=record.outcome==RangeOutcome.SUCCEEDED
+        val uncertain=record.outcome in setOf(RangeOutcome.PENDING,RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE,RangeOutcome.APPLIED_CHANGED)
+        Card(Modifier.fillMaxWidth().testTag("rangeRecord-${record.id}").clickable{details=if(details==record.id)null else record.id}) {
+            Column(Modifier.padding(8.dp)) {
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text(DateTimeFormatter.ofPattern("dd.MM\nHH:mm").withZone(ZoneId.systemDefault()).format(record.time),style=MaterialTheme.typography.labelSmall)
+                    Column(Modifier.weight(1f)){rangeChanges(record).forEach{Text(it,style=MaterialTheme.typography.bodySmall)}}
+                    Text(if(succeeded) "✓" else if(uncertain) "?" else "✕",color=if(succeeded)Color(0xFF168047) else if(uncertain)MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                        modifier=Modifier.testTag("rangeOutcome-${record.outcome}").semantics{contentDescription=if(succeeded)"Подтверждено" else if(uncertain)"Результат не подтверждён полностью" else "Не выполнено"})
+                }
+                if(details==record.id) {
+                    Text(RangeEngine.resultText(record))
+                    Text(record.text(),fontFamily=FontFamily.Monospace,style=MaterialTheme.typography.bodySmall)
+                    TextButton(onClick={export(record.id)}){Text("Сохранить TXT")}
+                    if(record.outcome in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE))TextButton(onClick={c.openRange(record.id)},enabled=!r.busy){Text("Проверить чтением")}
+                    TextButton(onClick={deleteId=record.id},enabled=!state.rangeOwned && !r.busy,modifier=Modifier.testTag("deleteRange-${record.id}")){Text("Удалить запись")}
+                }
+            }
+        }
+    }
+    if(state.rangeRecords.isNotEmpty())TextButton(onClick={clearAll=true},enabled=!state.rangeOwned && !r.busy,modifier=Modifier.testTag("clearRangeHistory")){Text("Удалить всю историю изменений")}
+    if(deleteId!=null || clearAll) ActionDialog(if(clearAll) "Удалить всю историю изменений?" else "Удалить запись?",{deleteId=null;clearAll=false},"deleteRangeDialog",content={Text("Удаляются только записи приложения. Конфигурация датчика не меняется.")},actions={
+        Button(onClick={c.deleteRangeRecord(if(clearAll)null else deleteId);deleteId=null;clearAll=false},modifier=Modifier.fillMaxWidth().testTag("confirmDeleteRange")){Text("Удалить")}
+        TextButton(onClick={deleteId=null;clearAll=false},modifier=Modifier.fillMaxWidth()){Text("Отмена")}
+    })
     if(state.rangeRecords.size>=100)TextButton(onClick=c::moreRangeRecords){Text("Показать более ранние операции")}
     if(r.phase==RangePhase.CONFIRM && state.rangeVisible) {
         val snapshot=r.snapshot!!;val requested=r.requested!!

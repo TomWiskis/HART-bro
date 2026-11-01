@@ -23,7 +23,9 @@ object RangeResponseCodes {
     fun description(code:Int)=if(code and 0x80!=0) "Ошибка связи 0x%02X".format(code) else codes[code]?.second ?: "Код $code: назначение не определено для команды 35"
 }
 
-class RangeOperations(private val client:HartClient) {
+class RangeOperations(private val client:HartClient,
+    // Only a documented device capability provider may enable alternatives. Universal reads do not enumerate writable units.
+    private val supportedUnits: (DeviceIdentity, ConfiguredRange) -> Set<Int> = { _, range -> setOf(range.unitCode) }) {
     suspend fun prepare():RangeSnapshot = client.transaction { snapshot() }
     private suspend fun HartClient.Transaction.snapshot():RangeSnapshot {
         val identity=identify();val configReply=read(identity.address,ReadCommand.DEVICE_INFORMATION)
@@ -31,7 +33,7 @@ class RangeOperations(private val client:HartClient) {
             listOf(ConfigResponse(15,configReply.data.hex(),configReply.receivedAt.toString(),configReply.deviceStatus,responseCode=0)))
         val range=configuration.range ?: throw IllegalArgumentException("Не получен достоверный диапазон команды 15")
         val warnings=mutableListOf<String>()
-        if(configReply.deviceStatus!=0)warnings+="Статус прибора 0x%02X: ${HartStatus.deviceDescription(configReply.deviceStatus)}".format(configReply.deviceStatus)
+        if(configReply.deviceStatus!=0)warnings+="Статус прибора: ${HartStatus.deviceDescription(configReply.deviceStatus)}"
         val sensor=try { PassportDecoder.sensor(read(identity.address,ReadCommand.SENSOR_INFORMATION).data) }
             catch(e:CancellationException){throw e}catch(e:IOException){throw e}catch(e:Exception){warnings+="Команда 14: ${e.message}";null}
         var tag:String?=null
@@ -40,7 +42,7 @@ class RangeOperations(private val client:HartClient) {
         if(tag==null) try { tag=ConfigurationDecoder.tagDescription(read(identity.address,ReadCommand.TAG_DESCRIPTION).data)["tag"]?.value?.takeIf{it.isNotBlank()} }
             catch(e:CancellationException){throw e}catch(e:IOException){throw e}catch(_:Exception){}
         val protection=when(configuration.parameters["writeProtect"]?.value?.toIntOrNull()){0->false;1->true;else->null}
-        return RangeSnapshot(identity,range,sensor,tag,protection,configuration,Instant.now(),warnings)
+        return RangeSnapshot(identity,range,sensor,tag,protection,configuration,Instant.now(),warnings,supportedUnits(identity,range).filter { UnitConversion.between(range.unitCode,it)!=null }.toSet()+range.unitCode)
     }
     suspend fun verify(expected:DeviceIdentity):RangeVerification=client.transaction { verification(expected) }
     private suspend fun HartClient.Transaction.verification(expected:DeviceIdentity):RangeVerification {
@@ -59,8 +61,8 @@ class RangeOperations(private val client:HartClient) {
             if(passportKey(fresh.identity)!=passportKey(prepared.identity)) throw RangeDeviceChanged(prepared.identity,fresh.identity)
             if(!sameRange(fresh.range,prepared.range) || fresh.sensor!=prepared.sensor || fresh.tag!=prepared.tag || fresh.writeProtected!=prepared.writeProtected)
                 throw RangeStale("Настройки или условия проверки изменились. Повторно считайте прибор и подтвердите новые данные.")
-            require(requested.unitCode==fresh.range.unitCode){"Изменение единицы не входит в эту операцию; используется код из команды 15"}
-            val validation=RangeRules.validate(fresh,requested.lower.toString(),requested.upper.toString())
+            require(requested.unitCode in fresh.writableUnits && requested.unitCode in prepared.writableUnits){"Поддержка записи выбранной единицы не подтверждена"}
+            val validation=RangeRules.validate(fresh,requested.lower.toString(),requested.upper.toString(),requested.unitCode)
             require(validation.allowed){(validation.errors+if(validation.unchanged)listOf("Новый диапазон совпадает с текущим")else emptyList()).joinToString("; ")}
             val finalIdentity=identify()
             if(passportKey(finalIdentity)!=passportKey(prepared.identity) || finalIdentity.hartRevision!=prepared.identity.hartRevision)throw RangeDeviceChanged(prepared.identity,finalIdentity)

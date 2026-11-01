@@ -11,7 +11,7 @@ data class WriteRange(val range:ConfiguredRange) {
     companion object { fun validUnit(code:Int)=code in 1..249 || code==253 }
 }
 data class RangeSnapshot(val identity:DeviceIdentity,val range:ConfiguredRange,val sensor:SensorInformation?,val tag:String?,
-                         val writeProtected:Boolean?,val configuration:ConfigurationSnapshot,val readAt:Instant=Instant.now(),val warnings:List<String> = emptyList())
+                         val writeProtected:Boolean?,val configuration:ConfigurationSnapshot,val readAt:Instant=Instant.now(),val warnings:List<String> = emptyList(), val writableUnits:Set<Int> = setOf(range.unitCode))
 data class RangeValidation(val range:ConfiguredRange?=null,val errors:List<String> = emptyList(),val warnings:List<String> = emptyList(),val unchanged:Boolean=false) {
     val allowed get()=range!=null && errors.isEmpty() && !unchanged
 }
@@ -23,18 +23,19 @@ object RangeRules {
         require(number.isFinite() && (number!=0f || decimal.signum()==0)) { "Число не представимо конечным ненулевым Float32" }
         return number
     }
-    fun validate(snapshot:RangeSnapshot,lower:String,upper:String):RangeValidation {
+    fun validate(snapshot:RangeSnapshot,lower:String,upper:String,unitCode:Int=snapshot.range.unitCode):RangeValidation {
         val errors=mutableListOf<String>();val warnings=snapshot.warnings.toMutableList()
         val lo=runCatching{parse(lower)}.getOrElse { errors+="Нижняя граница: ${it.message}";null }
         val hi=runCatching{parse(upper)}.getOrElse { errors+="Верхняя граница: ${it.message}";null }
         if(lo==null || hi==null) return RangeValidation(errors=errors,warnings=warnings)
         if(hi<=lo) errors+="URV должна быть больше LRV, в том числе после преобразования в Float32"
-        if(!WriteRange.validUnit(snapshot.range.unitCode)) errors+="Код единицы ${snapshot.range.unitCode} недопустим для команды 35"
+        if(unitCode !in snapshot.writableUnits) errors+="Поддержка записи выбранной единицы не подтверждена для этого прибора"
+        if(!WriteRange.validUnit(unitCode)) errors+="Код единицы ${snapshot.range.unitCode} недопустим для команды 35"
         if(snapshot.writeProtected==true) errors+="В приборе включена защита записи"
         if(snapshot.writeProtected==null) warnings+="Состояние защиты записи неизвестно; результат определит прибор"
         if(HartUnits.find(snapshot.range.unitCode)==null) warnings+="Единица HART ${snapshot.range.unitCode}: исходный код сохраняется без подмены"
         val sensor=snapshot.sensor
-        val conversion=sensor?.let{UnitConversion.between(it.unitCode,snapshot.range.unitCode)}
+        val conversion=sensor?.let{UnitConversion.between(it.unitCode,unitCode)}
         if(sensor==null || conversion==null || sensor.lowerLimit==null || sensor.upperLimit==null || sensor.upperLimit<=sensor.lowerLimit) {
             warnings+="Пределы сенсора не получены или единицы несопоставимы. Проверка физических ограничений недоступна."
         } else {
@@ -49,7 +50,7 @@ object RangeRules {
             val uncertainty=conversion.tolerance(credibleSpan,hi)+Math.ulp(lo).toDouble()/2
             if(span<minimum-uncertainty) errors+="Ширина диапазона меньше минимально допустимой"
         }
-        val range=ConfiguredRange(lo,hi,snapshot.range.unitCode)
+        val range=ConfiguredRange(lo,hi,unitCode)
         return RangeValidation(range,errors,warnings.distinct(),sameRange(range,snapshot.range))
     }
 }
@@ -93,4 +94,11 @@ fun rangeOutcome(requested:ConfiguredRange,original:ConfiguredRange,attempt:Rang
     if(reply==null) return RangeOutcome.UNCHANGED
     val echoed=reply?.let { runCatching{rangeReply(it.data)}.getOrNull() }
     return if(reply!=null && RangeResponseCodes.classify(reply.responseCode) in setOf(ResponseClass.SUCCESS,ResponseClass.WARNING) && echoed!=null && sameRange(echoed,actual)) RangeOutcome.APPLIED_CHANGED else RangeOutcome.UNKNOWN
+}
+
+fun convertRange(range: ConfiguredRange, unit: Int): ConfiguredRange {
+    val conversion = requireNotNull(UnitConversion.between(range.unitCode, unit)) { "Единицы несопоставимы" }
+    val lower = conversion.value(range.lower).toFloat(); val upper = conversion.value(range.upper).toFloat()
+    require(lower.isFinite() && upper.isFinite() && upper > lower) { "Преобразованный диапазон не представим Float32" }
+    return ConfiguredRange(lower, upper, unit)
 }
