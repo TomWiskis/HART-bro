@@ -1,3 +1,18 @@
+# HART-бро 0.5.3 — быстрый просмотр и параметры
+
+- [Скачать APK 0.5.3](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.3-debug.apk?download=1), Android 10+, versionCode 11.
+- [Архив проверок](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.3-test-results.zip?download=1).
+- [Успешный CI: 222 JVM / 28 Android](https://github.com/TomWiskis/HART-bro/actions/runs/41323721577), без ошибок/пропусков.
+- [Исходники](https://github.com/TomWiskis/HART-bro/tree/feature/0.5.3-quick-view), [изменения и ограничения](https://github.com/TomWiskis/HART-bro/blob/feature/0.5.3-quick-view/docs/CHANGES_0.5.3.md), [проверки/подпись](https://github.com/TomWiskis/HART-bro/blob/feature/0.5.3-quick-view/docs/VALIDATION_0.5.3.md), [полевое испытание](https://github.com/TomWiskis/HART-bro/blob/feature/0.5.3-quick-view/docs/RETEST_0.5.3.md).
+
+Быстрая карточка с лёгкой идентификацией без PV/тока и сессии, обновление при смене датчика, восстановление RFCOMM, отдельная диагностика, редактирование TAG/даты с одной записью и проверочным чтением, установка нуля через подтверждённый профиль, журнал с удалением, исправленные индикация HART и график. Команда 35 остаётся однократной. Обход и USB не менялись.
+
+**Ограничения:** Device ID / Meter ID — один десятичный серийный номер, доступный для чтения. Установка нуля первоначально разрешена для Viatran 970 HART5 DEV_REV2; другим моделям неподтверждённая команда не отправляется. Для записи другой единицы нужен документированный профиль поддержки. Дату можно заполнить в HART Date по шильду. Физического испытания VIATOR здесь не было.
+
+Подпись прежняя: SHA-256 сертификата `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`. Возможна установка поверх 0.5.2 без удаления приложения; форматы прежних данных сохранены. Для закрытого репозитория нужен вход в GitHub. Android JUnit/HTML/PNG доступны в артефакте CI; архив выше содержит локальные JUnit/lint и подтверждение со ссылкой на него. Контрольные суммы — в SHA256SUMS.
+
+---
+
 # HART-бро 0.5.2 — APK для испытаний
 
 - [Скачать APK 0.5.2](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.2-debug.apk?download=1), Android 10+, versionCode 10.
