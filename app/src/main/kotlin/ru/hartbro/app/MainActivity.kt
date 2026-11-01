@@ -232,6 +232,10 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                 if (state.diagnosticIncomplete) Text("HEX-журнал неполон: достигнут предел. Сохраните доступный TXT и очистите буфер.", color = MaterialTheme.colorScheme.error)
                 if (monitor.phase == MonitorPhase.CONNECTING) LinearProgressIndicator(Modifier.fillMaxWidth())
                 monitor.recovery?.let { RecoveryPanel(it) }
+                if (state.active && !state.walkActive && monitor.phase == MonitorPhase.ERROR && monitor.startedAt == null) {
+                    Text("Bluetooth: ${if (monitor.bluetoothConnected) "подключён" else "нет связи"}; датчик не идентифицирован")
+                    Button(onClick = c::retryIdentification, enabled = !state.rangeOwned, modifier = Modifier.testTag("retryIdentification")) { Text("Повторить опрос датчика") }
+                }
                 when (tab) {
                     0 -> {
                         Text("Подключение для: ${if(state.requestedMode==ConnectionMode.WALK) "обхода датчиков" else "мониторинга"}")

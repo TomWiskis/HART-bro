@@ -186,6 +186,7 @@ class SessionController(private val app: Application, private val connectionFact
             private var passportReader = PassportReader(client, report = ::event)
             override suspend fun identify() = client.identify().first.also { identity = it }
             override val isOpen get() = transport.isOpen
+            override fun onDisconnect(listener: () -> Unit) = transport.onDisconnect(listener)
             override fun prepareWalk() {
                 reader=null;readerClient=null
                 client=HartClient(transport, ::append, timeoutMillis=1500, readAttempts=1)
@@ -212,6 +213,9 @@ class SessionController(private val app: Application, private val connectionFact
     }
     // Tracks reader ownership, never shared concurrently: the engine is the sole connection owner.
     private var readerClient: HartClient? = null
+    fun retryIdentification() { scope.launch { archiveActions.withLock {
+        if (!rangeLeaseActive && !state.value.walkActive) engine?.retryIdentification()
+    } } }
     fun beginSession() { scope.launch { archiveActions.withLock { if (rangeLeaseActive || state.value.walkActive) { notice("Сначала завершите настройку или обход");return@withLock };engine?.startSession() ?: notice("Сначала подключите коммуникатор на вкладке «Связь»") } } }
     fun pause(value: Boolean) { scope.launch { archiveActions.withLock { if(!rangeLeaseActive)engine?.pause(value) } } }
     fun period(millis: Long) { engine?.setPeriod(millis) }

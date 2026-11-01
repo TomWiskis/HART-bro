@@ -70,6 +70,7 @@ class SessionLifecycle030Test {
         val engine = MonitoringEngine(backgroundScope, { connection }, sink)
         engine.start(false); advanceTimeBy(5001); runCurrent()
         assertEquals(MonitorPhase.ERROR, engine.state.value.phase); assertEquals(0, begins); assertNull(engine.state.value.startedAt)
-        assertEquals(1, closes); assertTrue(engine.state.value.message.contains("No initial HART reply")); engine.stop()
+        assertEquals(0, closes); assertTrue(engine.state.value.bluetoothConnected)
+        assertTrue(engine.state.value.message.contains("No initial HART reply")); engine.stop(); assertEquals(1, closes)
     }
 }

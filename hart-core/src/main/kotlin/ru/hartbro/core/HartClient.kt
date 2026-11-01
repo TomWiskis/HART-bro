@@ -34,6 +34,7 @@ class HartClient(
     init { require(timeoutMillis > 0); require(readAttempts in 1..3) }
     private val mutex = Mutex()
     @Volatile private var preambles = 20
+    private var readNeedsDrain = false
 
     suspend fun identify(): Pair<DeviceIdentity, Int> {
         val reply = read(HartAddress.Short(0), ReadCommand.IDENTITY)
@@ -72,6 +73,19 @@ class HartClient(
         var malformedFrames = false
         var receivedRaw=byteArrayOf()
         for (attempt in 1..attempts) {
+            if (!retainCodes && readNeedsDrain) {
+                // A failed read may still be arriving. Require 200 ms of silence, bounded at 1 s.
+                // HART has no transaction ID; a wholly delayed same-command reply cannot be distinguished.
+                val quiet = kotlinx.coroutines.withTimeoutOrNull(1000) {
+                    while (true) {
+                        val stale = kotlinx.coroutines.withTimeoutOrNull(200) { transport.receive() } ?: break
+                        log("STALE", "Поздний фрагмент завершённого чтения", stale)
+                    }
+                    true
+                } ?: false
+                if (!quiet) throw HartTimeoutException("HART-линия не освободилась после предыдущего ответа")
+                readNeedsDrain = false
+            }
             transport.discardBufferedInput().forEach { log("STALE", "Накопленные данные до отправки запроса; не считаются его ответом", it) }
             val decoder = HartDecoder()
             val started = System.nanoTime()
@@ -113,6 +127,7 @@ class HartClient(
             } catch (timeout: TimeoutCancellationException) {
                 // Do not swallow cancellation of the caller's enclosing timeout.
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (!retainCodes) readNeedsDrain = true
                 if (decoder.hasPartialFrame) { malformedFrames = true; log("FRAME", "Неполный кадр к окончанию таймаута", decoder.reset()) }
                 log("TIMEOUT", "Нет корректного ответа на команду $command за $timeoutMillis мс")
             } catch(e:java.io.IOException) { if(retainCodes)throw HartWriteIOException(e,receivedRaw) else throw e }

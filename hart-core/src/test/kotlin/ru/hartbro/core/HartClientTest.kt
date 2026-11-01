@@ -5,6 +5,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -36,6 +37,26 @@ private fun changedFrame(source: ByteArray, change: (ByteArray) -> Unit): ByteAr
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HartClientTest {
+    @Test fun lateChecksumWithinDeadlineCompletesOriginalFrame() = runTest {
+        val transport = SimulatedTransport { _, _ -> listOf(goldenIdentity.dropLast(1).toByteArray()) }
+        backgroundScope.launch { delay(40); transport.queue.send(byteArrayOf(goldenIdentity.last())) }
+        val identity = HartClient(transport, timeoutMillis=100, readAttempts=1).identify().first
+        assertEquals("26AB-123456", identity.uniqueKey); assertEquals(1, transport.writes.size)
+    }
+    @Test fun missingXorThenLateFragmentsAreDrainedBeforeFreshIdentification() = runTest {
+        val events = mutableListOf<DiagnosticEntry>()
+        val transport = SimulatedTransport { _, n -> if (n == 1) listOf(goldenIdentity.dropLast(1).toByteArray()) else listOf(goldenIdentity) }
+        val client = HartClient(transport, events::add, timeoutMillis=100, readAttempts=1)
+        backgroundScope.launch {
+            delay(120); transport.queue.send(byteArrayOf(goldenIdentity.last()))
+            delay(30); transport.queue.send(goldenIdentity.copyOfRange(4, 10))
+        }
+        try { client.identify(); fail("Missing XOR must not identify") }
+        catch (e: HartTimeoutException) { assertTrue(e.malformedFrames) }
+        assertEquals("26AB-123456", client.identify().first.uniqueKey)
+        assertEquals(2, transport.writes.size); assertEquals(2, events.count { it.kind == "STALE" })
+        assertEquals(1, events.count { it.kind == "RX-FRAME" })
+    }
     @Test fun identifiesThenReadsPvUsingLongAddress() = runTest {
         val transport = SimulatedTransport { _, n -> listOf(if (n == 1) goldenIdentity else goldenPv) }
         val client = HartClient(transport)

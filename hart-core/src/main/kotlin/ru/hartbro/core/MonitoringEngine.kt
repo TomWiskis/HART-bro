@@ -22,6 +22,7 @@ interface MonitorConnection : AutoCloseable {
     fun prepareWalk() {}
     fun prepareMonitoring() {}
     fun resetSession() {}
+    fun onDisconnect(listener: () -> Unit) {}
     val isOpen: Boolean get() = true
 }
 enum class MonitorPhase { IDLE, CONNECTING, READY, MONITORING, PAUSED, RECOVERING, DECISION, DIFFERENT_DEVICE, ERROR }
@@ -66,22 +67,23 @@ class MonitoringEngine(
     @Volatile private var startingSession = false
     private fun publish(phase: MonitorPhase, message: String, latest: MeasurementBatch? = null) {
         mutableState.update { it.copy(phase = phase, message = message, latest = latest,
-            bluetoothConnected = connection != null, revision = it.revision + 1,
+            bluetoothConnected = connection?.isOpen == true, revision = it.revision + 1,
             recovery = if (phase == MonitorPhase.RECOVERING) it.recovery else null) }
     }
     fun startSession() = synchronized(controls) {
         if (state.value.phase != MonitorPhase.READY || startingSession || configuring) return@synchronized
         startingSession=true
-        if (job == null) start() else sessionStarts.trySend(Unit)
+        if (job?.isActive != true) start() else sessionStarts.trySend(Unit)
     }
-    fun start(automaticSession: Boolean = true) {
-        check(job == null) { "Подключение уже начато" }
+    fun start(automaticSession: Boolean = true) = synchronized(controls) {
+        check(job?.isActive != true) { "Подключение уже начато" }
         publish(MonitorPhase.CONNECTING, "Подключение Bluetooth и идентификация HART…")
-        job = scope.launch {
+        job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 publish(MonitorPhase.CONNECTING, "Подключение Bluetooth и идентификация HART…")
                 var (identity,config)=ioGate.withLock {
-                    if (connection == null || connection?.isOpen != true) connection = connect()
+                    if (connection?.isOpen != true) { closeConnection(); connection = openConnection() }
+                    publish(MonitorPhase.CONNECTING, "Bluetooth подключён. Идентификация HART…")
                     connection!!.identify() to connection!!.configuration()
                 }
                 mutableState.update { it.copy(identity = identity, configuration = config) }
@@ -149,10 +151,33 @@ class MonitoringEngine(
                 publish(MonitorPhase.ERROR, "Таймаут подключения Bluetooth")
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
-                closeConnection()
+                if ((e !is HartTimeoutException && e !is HartResponseException) || connection?.isOpen != true) closeConnection()
+                if (state.value.startedAt == null) mutableState.update { it.copy(identity = null, configuration = ConfigurationSnapshot()) }
                 runCatching { sink.event(wallTime(), "Остановка: ${e.message}") }
                 publish(if (state.value.startedAt != null) MonitorPhase.DECISION else MonitorPhase.ERROR, "Остановка: ${e.message}")
-            } finally { startingSession=false }
+            } finally {
+                val finishedJob = currentCoroutineContext()[Job]
+                synchronized(controls) {
+                    if (job === finishedJob) { startingSession=false; job=null }
+                }
+            }
+        }
+        job!!.start()
+    }
+    suspend fun retryIdentification() {
+        synchronized(controls) {
+            if (state.value.phase != MonitorPhase.ERROR || state.value.startedAt != null || configuring) return
+        }
+        // ERROR can be observed just before the failing coroutine finishes its finally block.
+        job?.join()
+        synchronized(controls) {
+            if (state.value.phase == MonitorPhase.ERROR && state.value.startedAt == null && !configuring) start(false)
+        }
+    }
+    private suspend fun openConnection(): MonitorConnection = connect().also(::observeConnection)
+    private fun observeConnection(opened: MonitorConnection) {
+        opened.onDisconnect {
+            if (connection === opened) mutableState.update { it.copy(bluetoothConnected = false, latest = null) }
         }
     }
     private suspend fun recover(expected: DeviceIdentity, reason: LossReason): Boolean {
@@ -176,7 +201,7 @@ class MonitoringEngine(
                             attempt++
                             progress(attempt, "Подключение / идентификация")
                             sink.event(wallTime(), "Попытка восстановления $attempt")
-                            if (connection == null) connection = connect()
+                            if (connection?.isOpen != true) { closeConnection(); connection = openConnection() }
                             val found = connection!!.identify()
                             if (found.uniqueKey != expected.uniqueKey || found.manufacturerCode != expected.manufacturerCode) {
                                 sink.event(wallTime(), "Другой прибор: ${found.uniqueKey}. Данные не объединены")
@@ -249,6 +274,7 @@ class MonitoringEngine(
         check(configuring)
         try {
         connection=replacement
+        replacement?.let(::observeConnection)
         val same=!differentDevice && (verification?.identity?.let { passportKey(it)==state.value.identity?.let(::passportKey) } ?: true)
         if(verification!=null && same) {
             val current=state.value.configuration

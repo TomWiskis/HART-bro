@@ -37,10 +37,14 @@ class FieldRegressionApplication : HartApplication() {
     @Volatile var hartDeviceId = 0x5FCA7F
     @Volatile var identifyDelay = 0L
     @Volatile var failIdentity = false
+    @Volatile var closeRfcomm: (() -> Unit)? = null
     override fun createController() = SessionController(this) {
         connections.incrementAndGet()
         object : MonitorConnection {
             private var open = true
+            private var disconnected: (() -> Unit)? = null
+            init { closeRfcomm = { close() } }
+            override fun onDisconnect(listener: () -> Unit) { disconnected = listener; if (!isOpen) listener() }
             private val rangeWire=RangeTransportFixture(this@FieldRegressionApplication)
             private val rangeOperations by lazy{RangeOperations(HartClient(rangeWire,controller::append,timeoutMillis=rangeTimeout,readAttempts=1))}
             override val isOpen get() = open && rangeWire.open
@@ -71,7 +75,7 @@ class FieldRegressionApplication : HartApplication() {
                 samples.incrementAndGet(); val now = Instant.now()
                 return MeasurementBatch(listOf(Measurement("PV", 1.25f, 12, Quality.GOOD, now, 9)), 0, now)
             }
-            override fun close() { open = false;rangeWire.close() }
+            override fun close() { open = false;rangeWire.close();disconnected?.invoke() }
         }
     }
 }
@@ -206,6 +210,36 @@ class FieldRegressionTest {
             returnToApp()
             assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
             assertEquals(MonitorPhase.ERROR, app.controller.state.value.monitor.phase)
+            val connects = app.connections.get(); val writes = app.rangeWrites.get()
+            assertTrue(app.controller.state.value.monitor.bluetoothConnected)
+            scenario.recreate()
+            ui.onNodeWithTag("retryIdentification").performScrollTo().assertIsDisplayed()
+            app.failIdentity = false; app.identifyDelay = 0
+            ui.onNodeWithTag("retryIdentification").performClick()
+            waitFor { app.controller.state.value.monitor.phase == MonitorPhase.READY }
+            assertEquals(connects, app.connections.get()); assertEquals(writes, app.rangeWrites.get())
+            assertNull(app.controller.history.bounds()); assertNotNull(app.controller.state.value.monitor.identity)
+            scenario.recreate()
+            assertEquals(MonitorPhase.READY, app.controller.state.value.monitor.phase)
+            assertEquals(connects, app.connections.get())
+        }
+    }
+    @Test fun retryIdentificationReconnectsClosedRfcommAfterActivityRecreation() {
+        app.failIdentity = true
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", "00:11:22:33:44:55")) }
+            waitFor { app.controller.state.value.monitor.phase == MonitorPhase.ERROR }
+            val connects = app.connections.get(); val writes = app.rangeWrites.get()
+            app.closeRfcomm!!.invoke()
+            waitFor { !app.controller.state.value.monitor.bluetoothConnected }
+            scenario.recreate()
+            ui.onNodeWithTag("retryIdentification").performScrollTo().assertIsDisplayed()
+            app.failIdentity = false
+            ui.onNodeWithTag("retryIdentification").performClick()
+            waitFor { app.controller.state.value.monitor.phase == MonitorPhase.READY }
+            assertEquals(connects + 1, app.connections.get())
+            assertTrue(app.controller.state.value.monitor.bluetoothConnected)
+            assertNull(app.controller.history.bounds()); assertEquals(writes, app.rangeWrites.get())
         }
     }
     @Test fun initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession() {

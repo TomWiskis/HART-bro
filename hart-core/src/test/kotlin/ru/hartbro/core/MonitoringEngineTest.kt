@@ -27,6 +27,50 @@ private class TestConnection(
 }
 @OptIn(ExperimentalCoroutinesApi::class)
 class MonitoringEngineTest {
+    @Test fun failedIdentificationCanRepeatOnSameOpenConnectionWithoutStartingSession() = runTest {
+        var attempts = 0; var connects = 0
+        val conn = TestConnection(onIdentify = { if (++attempts <= 2) throw HartTimeoutException("missing XOR") else metran02 })
+        val sink = MemorySink()
+        val engine = MonitoringEngine(backgroundScope, { connects++; conn }, sink)
+        engine.start(false); runCurrent()
+        repeat(2) {
+            assertEquals(MonitorPhase.ERROR, engine.state.value.phase)
+            assertTrue(engine.state.value.bluetoothConnected); assertNull(engine.state.value.identity)
+            assertEquals(0, conn.closes); assertEquals(0, sink.begins)
+            engine.retryIdentification(); runCurrent()
+        }
+        assertEquals(MonitorPhase.READY, engine.state.value.phase)
+        assertEquals(1, connects); assertEquals(3, attempts); assertEquals(0, sink.begins)
+        engine.startSession(); runCurrent()
+        assertEquals(MonitorPhase.MONITORING, engine.state.value.phase); assertEquals(1, sink.begins)
+        engine.stop()
+    }
+    @Test fun failedIdentificationReconnectsClosedRfcommAndIgnoresDuplicateRetry() = runTest {
+        var opened = true; var disconnect: (() -> Unit)? = null; var connects = 0
+        val old = object : MonitorConnection {
+            override val isOpen get() = opened
+            override fun onDisconnect(listener: () -> Unit) { disconnect = listener }
+            override suspend fun identify(): DeviceIdentity = throw HartTimeoutException("partial")
+            override suspend fun discover() = sample02()
+            override suspend fun sample() = sample02()
+            override fun close() { opened = false; disconnect?.invoke() }
+        }
+        val engine = MonitoringEngine(backgroundScope, { if (++connects == 1) old else TestConnection(onIdentify = { delay(50); metran02 }) }, MemorySink())
+        engine.start(false); runCurrent(); assertTrue(engine.state.value.bluetoothConnected)
+        old.close(); assertFalse(engine.state.value.bluetoothConnected)
+        engine.retryIdentification(); engine.retryIdentification(); runCurrent()
+        advanceTimeBy(51); runCurrent()
+        assertEquals(2, connects); assertEquals(MonitorPhase.READY, engine.state.value.phase)
+        assertTrue(engine.state.value.bluetoothConnected); engine.stop()
+    }
+    @Test fun identificationIoFailureClosesTransportButAllowsNewAttempt() = runTest {
+        val old = TestConnection(onIdentify = { throw IOException("EOF") }); var connects = 0
+        val engine = MonitoringEngine(backgroundScope, { if (++connects == 1) old else TestConnection() }, MemorySink())
+        engine.start(false); runCurrent()
+        assertFalse(engine.state.value.bluetoothConnected); assertEquals(1, old.closes)
+        engine.retryIdentification(); runCurrent()
+        assertEquals(MonitorPhase.READY, engine.state.value.phase); assertEquals(2, connects); engine.stop()
+    }
     @Test fun pollingIsSerializedAndSlowerExchangesDoNotBuildABacklog() = runTest {
         val starts = mutableListOf<Long>(); var outstanding = 0; var peak = 0
         val conn = TestConnection(onSample = {

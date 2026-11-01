@@ -22,6 +22,8 @@ class BluetoothSppTransport private constructor(private val socket: BluetoothSoc
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val incoming = Channel<ByteArray>(capacity = 64)
     @Volatile private var closed = false
+    @Volatile private var disconnected: (() -> Unit)? = null
+    fun onDisconnect(listener: () -> Unit) { disconnected = listener; if (!isOpen) listener() }
     val isOpen: Boolean get() = !closed && socket.isConnected
 
     init {
@@ -36,6 +38,7 @@ class BluetoothSppTransport private constructor(private val socket: BluetoothSoc
             } catch (e: Exception) {
                 diagnostic("RX reader завершён; localClosed=$closed; socketConnected=${socket.isConnected}; ${e.javaClass.simpleName}: ${e.message}")
                 incoming.close(e)
+                close()
             }
         }
     }
@@ -67,6 +70,7 @@ class BluetoothSppTransport private constructor(private val socket: BluetoothSoc
         runCatching { socket.close() } // Also releases blocking connect/read/write on Android.
         incoming.close(IOException("Bluetooth-соединение закрыто"))
         scope.cancel()
+        disconnected?.invoke()
     }
 
     companion object {
