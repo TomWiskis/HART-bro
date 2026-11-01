@@ -51,13 +51,18 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
             var unitsOpen by remember{mutableStateOf(false)}
             var lowerInitial by rememberSaveable(r.token){mutableStateOf(true)}
             var upperInitial by rememberSaveable(r.token){mutableStateOf(true)}
+            var lowerFocused by remember{mutableStateOf(false)}
+            var upperFocused by remember{mutableStateOf(false)}
+            // Apply selection after the tap's internal cursor update, so the first key replaces the number.
+            LaunchedEffect(lowerFocused){if(lowerFocused && lowerInitial){lowerInitial=false;lower=lower.copy(selection=TextRange(0,lower.text.length))}}
+            LaunchedEffect(upperFocused){if(upperFocused && upperInitial){upperInitial=false;upper=upper.copy(selection=TextRange(0,upper.text.length))}}
             val validation=RangeRules.validate(snapshot,lower.text,upper.text,unit)
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
                 OutlinedTextField(lower,{lower=it},label={Text("Низ")},singleLine=true,textStyle=MaterialTheme.typography.bodyMedium,
-                    keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.weight(1f).testTag("rangeLower").onFocusChanged{if(it.isFocused && lowerInitial){lower=lower.copy(selection=TextRange(0,lower.text.length));lowerInitial=false}})
+                    keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.weight(1f).testTag("rangeLower").onFocusChanged{lowerFocused=it.isFocused})
                 Text("—")
                 OutlinedTextField(upper,{upper=it},label={Text("Верх")},singleLine=true,textStyle=MaterialTheme.typography.bodyMedium,
-                    keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.weight(1f).testTag("rangeUpper").onFocusChanged{if(it.isFocused && upperInitial){upper=upper.copy(selection=TextRange(0,upper.text.length));upperInitial=false}})
+                    keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.weight(1f).testTag("rangeUpper").onFocusChanged{upperFocused=it.isFocused})
                 Box {
                     TextButton(onClick={unitsOpen=true},modifier=Modifier.widthIn(max=90.dp).testTag("rangeUnits")){Text("${rangeUnit(unit)} ▾")}
                     DropdownMenu(expanded=unitsOpen,onDismissRequest={unitsOpen=false}) {
