@@ -1,3 +1,18 @@
+# HART-бро 0.5.2 — APK для испытаний
+
+- [Скачать APK 0.5.2](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.2-debug.apk?download=1), Android 10+, versionCode 10.
+- [Отчёты и подтверждения проверок](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.2-test-results.zip?download=1).
+- [Успешный полный CI: 204 JVM и 25 Android](https://github.com/TomWiskis/HART-bro/actions/runs/41293706552), без ошибок/пропусков; дополнительно прошли три предварительных UI-сценария.
+- [Исходники](https://github.com/TomWiskis/HART-bro/tree/feature/0.5.2-interface), [изменения](https://github.com/TomWiskis/HART-bro/blob/feature/0.5.2-interface/docs/CHANGES_0.5.2.md), [проверки/подпись](https://github.com/TomWiskis/HART-bro/blob/feature/0.5.2-interface/docs/VALIDATION_0.5.2.md), [испытание с VIATOR](https://github.com/TomWiskis/HART-bro/blob/feature/0.5.2-interface/docs/RETEST_0.5.2.md).
+
+Компактный монитор с PV и фактическим током, постоянный Bluetooth/HART-статус, самостоятельная диагностика, стабильное 60-секундное окно с возвратом к следованию, форма диапазона и компактная история с подтверждаемым удалением. Команда 35 остаётся однократной с проверкой результата.
+
+**Без документированного профиля допустимых единиц доступна только текущая единица датчика.** Произвольные альтернативы не предлагаются; аппаратная поддержка не угадывается по размерности. Все автоматические записи выполнены только на программных имитаторах, физический VIATOR здесь не испытывался.
+
+Подпись прежняя: SHA-256 сертификата `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`. Устанавливайте поверх 0.5.1 без удаления/очистки данных, предварительно сохранив важную текущую сессию/ведомость. Форматы данных сохранены. Для закрытого репозитория нужен вход в GitHub. Полные Android JUnit/HTML/PNG доступны в артефакте CI; ZIP выше содержит локальные JUnit/Lint и подтверждение со ссылкой на него.
+
+---
+
 # HART-бро 0.5.1 — повторная идентификация датчика
 
 - [Скачать APK 0.5.1](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.1-debug.apk?download=1), Android 10+, versionCode 9.
