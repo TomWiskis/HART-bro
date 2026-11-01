@@ -15,6 +15,7 @@ interface MonitorConnection : AutoCloseable {
     suspend fun discover(): MeasurementBatch
     suspend fun sample(): MeasurementBatch
     suspend fun configuration(): ConfigurationSnapshot = ConfigurationSnapshot()
+    suspend fun editSensor(edit: SensorEdit, journal: SensorJournal): SensorEditResult = throw UnsupportedOperationException("Запись параметров недоступна")
     suspend fun passport(identity: DeviceIdentity): PassportReading = PassportReading(identity, emptyMap(), emptyMap(), null, java.time.Instant.now(), mapOf("connection" to "Паспортное чтение недоступно"))
     suspend fun rangeSnapshot():RangeSnapshot = throw UnsupportedOperationException("Настройка диапазона недоступна")
     suspend fun applyRange(prepared:RangeSnapshot,requested:ConfiguredRange,beforeSend:(ByteArray)->Unit,onReply:(HartExchange)->Unit,onInvalidRx:(ByteArray)->Unit = {}):RangeAttempt = throw UnsupportedOperationException("Настройка диапазона недоступна")
@@ -35,6 +36,7 @@ data class RecoveryProgress(val reason: LossReason, val startedMillis: Long, val
 data class MonitorState(
     val phase: MonitorPhase = MonitorPhase.IDLE, val identity: DeviceIdentity? = null,
     val latest: MeasurementBatch? = null, val lastKnown: MeasurementBatch? = null, val lastHartSuccess: Instant? = null, val bluetoothConnected: Boolean = false,
+    val identificationResponding: Boolean = false,
     val message: String = "Сессия не начата", val periodMillis: Long = 2000,
     val configuration: ConfigurationSnapshot = ConfigurationSnapshot(),
     val startedAt: Instant? = null, val revision: Long = 0, val recovery: RecoveryProgress? = null,
@@ -72,7 +74,7 @@ class MonitoringEngine(
             recovery = if (phase == MonitorPhase.RECOVERING) it.recovery else null) }
     }
     fun startSession() = synchronized(controls) {
-        if (state.value.phase != MonitorPhase.READY || startingSession || configuring) return@synchronized
+        if (state.value.phase != MonitorPhase.READY || !state.value.bluetoothConnected || !state.value.identificationResponding || startingSession || configuring) return@synchronized
         startingSession=true
         if (job?.isActive != true) start() else sessionStarts.trySend(Unit)
     }
@@ -87,12 +89,13 @@ class MonitoringEngine(
                     publish(MonitorPhase.CONNECTING, "Bluetooth подключён. Идентификация HART…")
                     connection!!.identify() to connection!!.configuration()
                 }
-                mutableState.update { it.copy(identity = identity, configuration = config, lastHartSuccess = wallTime()) }
+                mutableState.update { it.copy(identity = identity, configuration = config, lastHartSuccess = wallTime(), identificationResponding = true) }
                 if (!automaticSession) {
-                    publish(MonitorPhase.READY, "Прибор определён. Можно начать сессию")
-                    sessionStarts.receive()
+                    publish(MonitorPhase.READY, "Прибор определён. Быстрый просмотр")
+                    if (!waitForSession()) return@launch
                     publish(MonitorPhase.CONNECTING, "Проверка прибора перед новой сессией…")
                     ioGate.withLock { identity = connection!!.identify();config = connection!!.configuration() }
+                    mutableState.update { it.copy(identity = identity, configuration = config, lastHartSuccess = wallTime(), identificationResponding = true) }
                 }
                 ioGate.withLock {
                 connection!!.resetSession()
@@ -153,7 +156,7 @@ class MonitoringEngine(
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
                 if ((e !is HartTimeoutException && e !is HartResponseException) || connection?.isOpen != true) closeConnection()
-                if (state.value.startedAt == null) mutableState.update { it.copy(identity = null, configuration = ConfigurationSnapshot()) }
+                mutableState.update { it.copy(identificationResponding = false) }
                 runCatching { sink.event(wallTime(), "Остановка: ${e.message}") }
                 publish(if (state.value.startedAt != null) MonitorPhase.DECISION else MonitorPhase.ERROR, "Остановка: ${e.message}")
             } finally {
@@ -179,10 +182,41 @@ class MonitoringEngine(
     private suspend fun openConnection(): MonitorConnection = connect().also(::observeConnection)
     private fun observeConnection(opened: MonitorConnection) {
         opened.onDisconnect {
-            if (connection === opened) mutableState.update { it.copy(bluetoothConnected = false, latest = null) }
+            if (connection === opened) mutableState.update { it.copy(bluetoothConnected = false, identificationResponding = false, latest = null) }
         }
     }
-    private suspend fun recover(expected: DeviceIdentity, reason: LossReason): Boolean {
+    /** No PV, current, history or measurement session is created by these presence checks. */
+    private suspend fun waitForSession(): Boolean {
+        var errors = 0
+        while (currentCoroutineContext().isActive) {
+            if (withTimeoutOrNull(1500) { sessionStarts.receive(); true } == true) return true
+            ioGate.withLock {
+                if (configuring) return@withLock
+                try {
+                    checkQuickConnection()
+                    val found = connection!!.identify()
+                    val changed = state.value.identity?.let(::passportKey) != passportKey(found)
+                    val config = if (changed) connection!!.configuration() else state.value.configuration
+                    mutableState.update { it.copy(identity = found, configuration = config, lastHartSuccess = wallTime(), identificationResponding = true) }
+                    publish(MonitorPhase.READY, if (changed) "Подключён другой датчик. Конфигурация обновлена" else "Быстрый просмотр")
+                    errors = 0
+                } catch (e: CancellationException) { throw e
+                } catch (e: Exception) {
+                    mutableState.update { it.copy(identificationResponding = false) }
+                    publish(MonitorPhase.READY, "Датчик не отвечает: ${e.message}")
+                    errors++
+                    if (e is IOException || errors >= 3) {
+                        if (e is IOException) closeConnection()
+                        if (!recover(state.value.identity!!, if (e is IOException) LossReason.BLUETOOTH else LossReason.HART, quick = true)) return false
+                        errors = 0
+                    }
+                }
+            }
+        }
+        return false
+    }
+    private fun checkQuickConnection() { if (connection?.isOpen != true) throw IOException("RFCOMM закрыт") }
+    private suspend fun recover(expected: DeviceIdentity, reason: LossReason, quick: Boolean = false): Boolean {
         val started = monotonicMillis()
         val deadline = started + 60_000
         mutableState.update { it.copy(recovery = RecoveryProgress(reason, started, deadline, started)) }
@@ -205,11 +239,17 @@ class MonitoringEngine(
                             sink.event(wallTime(), "Попытка восстановления $attempt")
                             if (connection?.isOpen != true) { closeConnection(); connection = openConnection() }
                             val found = connection!!.identify()
-                            if (found.uniqueKey != expected.uniqueKey || found.manufacturerCode != expected.manufacturerCode) {
+                            if (!quick && (found.uniqueKey != expected.uniqueKey || found.manufacturerCode != expected.manufacturerCode)) {
                                 sink.event(wallTime(), "Другой прибор: ${found.uniqueKey}. Данные не объединены")
                                 closeConnection()
                                 publish(MonitorPhase.DIFFERENT_DEVICE, "Обнаружен другой прибор ${found.uniqueKey}. Сохраните или завершите старую сессию.")
                                 return@withTimeout false
+                            }
+                            if (quick) {
+                                val config = if (passportKey(found) != state.value.identity?.let(::passportKey)) connection!!.configuration() else state.value.configuration
+                                mutableState.update { it.copy(identity = found, configuration = config, lastHartSuccess = wallTime(), identificationResponding = true) }
+                                publish(MonitorPhase.READY, "Связь восстановлена. Быстрый просмотр")
+                                return@withTimeout true
                             }
                             progress(status = "ID проверен; чтение")
                             val batch = connection!!.sample()
@@ -236,8 +276,9 @@ class MonitoringEngine(
         } catch (e: TimeoutCancellationException) {
             currentCoroutineContext().ensureActive()
             sink.event(wallTime(), "Связь не восстановлена за 60 секунд")
-            closeConnection()
-            publish(MonitorPhase.DECISION, "Не удалось восстановить связь с датчиком в течение 60 секунд. Что сделать с текущей сессией?")
+            if (!quick || connection?.isOpen != true) closeConnection()
+            mutableState.update { it.copy(identificationResponding = false) }
+            publish(if (quick) MonitorPhase.ERROR else MonitorPhase.DECISION, if (quick) "Связь не восстановлена за 60 секунд. Повторите опрос датчика" else "Не удалось восстановить связь с датчиком в течение 60 секунд. Что сделать с текущей сессией?")
             return false
         }
     }
@@ -280,7 +321,7 @@ class MonitoringEngine(
         val same=!differentDevice && (verification?.identity?.let { passportKey(it)==state.value.identity?.let(::passportKey) } ?: true)
         if(verification!=null && same) {
             val current=state.value.configuration
-            val updated=current.copy(parameters=current.parameters+verification.configuration.parameters,responses=current.responses.filterNot{it.command==15}+verification.configuration.responses)
+            val updated=current.copy(parameters=current.parameters+verification.configuration.parameters,responses=current.responses.filterNot{old->verification.configuration.responses.any{it.command==old.command}}+verification.configuration.responses)
             mutableState.update { it.copy(configuration=updated, lastHartSuccess=verification.readAt) };sink.configuration(updated)
         }
         if(state.value.startedAt!=null) sink.event(wallTime(),message)
@@ -304,6 +345,7 @@ class MonitoringEngine(
         mutableState.update { it.copy(startedAt = null, latest = null, lastKnown = null, recovery = null) }
         publish(if (connection != null) MonitorPhase.READY else MonitorPhase.IDLE,
             if (connection != null) "Сессия завершена. Bluetooth подключён" else "Сессия завершена. Подключите коммуникатор")
+        if (connection != null) start(false)
     }
     suspend fun stop(reason: String = "Завершено пользователем") {
         runCatching { sink.event(wallTime(), "Остановка мониторинга: $reason") }

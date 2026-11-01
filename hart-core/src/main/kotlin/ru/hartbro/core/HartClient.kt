@@ -63,6 +63,8 @@ class HartClient(
         /** Typed command 35 only. No retry path or arbitrary command-number API exists. */
         suspend fun writeRange(address: HartAddress.Long, command: WriteRange, beforeSend:(ByteArray)->Unit): HartExchange =
             exchange(address,35,HartCodec.writeRange(address,command,preambles),1,true,beforeSend)
+        suspend fun writeSensor(address: HartAddress.Long, command: SensorWrite, beforeSend: (ByteArray) -> Unit): HartExchange =
+            exchange(address,command.number,HartCodec.writeSensor(address,command,preambles),1,true,beforeSend)
     }
     private suspend fun readLocked(address:HartAddress,command:ReadCommand,data:ByteArray):HartReply {
         val reply=exchange(address,command.number,HartCodec.request(address,command,preambles,data),readAttempts,false)
@@ -127,7 +129,7 @@ class HartClient(
             } catch (timeout: TimeoutCancellationException) {
                 // Do not swallow cancellation of the caller's enclosing timeout.
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                if (!retainCodes) readNeedsDrain = true
+                readNeedsDrain = true
                 if (decoder.hasPartialFrame) { malformedFrames = true; log("FRAME", "Неполный кадр к окончанию таймаута", decoder.reset()) }
                 log("TIMEOUT", "Нет корректного ответа на команду $command за $timeoutMillis мс")
             } catch(e:java.io.IOException) { if(retainCodes)throw HartWriteIOException(e,receivedRaw) else throw e }

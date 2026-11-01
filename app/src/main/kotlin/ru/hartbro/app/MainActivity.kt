@@ -207,19 +207,16 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                     Button(onClick=c::saveWalk,enabled=state.walk.book?.rows?.isNotEmpty()==true,modifier=Modifier.testTag("saveWalk")){Text("Сохранить обход")}
                     OutlinedButton(onClick={monitorAfterWalk=false;walkEnd=true},modifier=Modifier.testTag("endWalk")){Text("Завершить обход…")}
                 }
-            } else if (monitor.startedAt != null || tab == 1) Surface(tonalElevation = 3.dp) {
+            } else if (monitor.startedAt != null) Surface(tonalElevation = 3.dp) {
                 FlowRow(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (monitor.startedAt == null) {
-                        Button(onClick = c::beginSession, enabled = monitor.phase == MonitorPhase.READY, modifier = Modifier.testTag("startSession")) { Text("Начать сессию") }
-                    } else {
                         if (monitor.phase in setOf(MonitorPhase.MONITORING, MonitorPhase.PAUSED)) Button(onClick = { c.pause(monitor.phase != MonitorPhase.PAUSED) }) { Text(if (monitor.phase == MonitorPhase.PAUSED) "Продолжить" else "Приостановить") }
                         Button(onClick = { c.save() }, enabled = !state.saving) { Text(if (state.saving) "Сохранение…" else "Сохранить сессию") }
                         OutlinedButton(onClick = { endPrompt = true }, enabled = !state.saving, modifier = Modifier.testTag("endSession")) { Text("Завершить…") }
-                    }
                 }
             }
             }
         }) { padding ->
+        SensorEditDialog(state,c)
         Column(Modifier.fillMaxSize().padding(padding)) {
             if(state.rangeVisible) {
                 Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){RangeScreen(state,c,exportRange)}

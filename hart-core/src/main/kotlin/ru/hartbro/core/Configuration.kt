@@ -3,6 +3,8 @@ package ru.hartbro.core
 import java.io.*
 import java.nio.ByteBuffer
 import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 /** Read-only, deliberately partial configuration. Raw reply bytes preserve IEEE-754 bits and HART codes. */
 data class ConfigValue(val value: String, val command: Int, val unitCode: Int? = null)
@@ -12,6 +14,7 @@ data class ConfiguredRange(val lower: Float, val upper: Float, val unitCode: Int
     private fun number(value: Float) = value.toString().removeSuffix(".0").replace('-', '−').replace('.', ',')
 }
 data class ConfigurationSnapshot(val parameters: Map<String, ConfigValue> = emptyMap(), val responses: List<ConfigResponse> = emptyList()) {
+    val productionDate: LocalDate? get() = parameters["deviceDateRaw"]?.value?.let { runCatching { HartDate.decode(hexBytes(it)) }.getOrNull() }
     val tag: String? get() = parameters["longTag"]?.value?.takeIf { it.isNotBlank() } ?: parameters["tag"]?.value?.takeIf { it.isNotBlank() }
     val range: ConfiguredRange? get() {
         val lo = parameters["lowerRange"]?.value?.toFloatOrNull() ?: return null
@@ -112,3 +115,17 @@ suspend fun readConfiguration(client: HartClient, identity: DeviceIdentity, repo
 }
 
 val configurationNames = mapOf("tag" to "TAG", "longTag" to "Длинный TAG", "description" to "Описание", "lowerRange" to "Нижняя граница", "upperRange" to "Верхняя граница", "rangeUnit" to "Единица HART", "damping" to "Демпфирование, с", "transferFunction" to "Передаточная функция", "alarm" to "Сигнализация", "writeProtect" to "Защита записи", "privateLabel" to "Марка OEM", "analogChannelFlags" to "Флаги аналогового канала", "deviceDateRaw" to "Дата прибора (HART)")
+
+/** HART Date is editable; the user can fill it from the nameplate. No inferred factory provenance. */
+object HartDate {
+    fun decode(raw: ByteArray): LocalDate? {
+        require(raw.size == 3)
+        if (raw.all { it.u8() == 0 } || raw.all { it.u8() == 255 }) return null
+        return runCatching { LocalDate.of(1900 + raw[2].u8(), raw[1].u8(), raw[0].u8()) }.getOrNull()
+    }
+    fun parse(text: String): LocalDate = runCatching { LocalDate.parse(text, DateTimeFormatter.ofPattern("dd.MM.uuuu").withResolverStyle(java.time.format.ResolverStyle.STRICT)) }
+        .getOrElse { throw IllegalArgumentException("Введите дату в формате ДД.ММ.ГГГГ") }.also { require(it.year in 1900..2155) { "Год: 1900–2155" } }
+    fun encode(date: LocalDate): ByteArray { require(date.year in 1900..2155); return byteArrayOf(date.dayOfMonth.toByte(), date.monthValue.toByte(), (date.year - 1900).toByte()) }
+    fun format(date: LocalDate): String = date.format(DateTimeFormatter.ofPattern("dd.MM.uuuu"))
+}
+internal fun hexBytes(text: String): ByteArray = text.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.map { it.toInt(16).toByte() }.toByteArray()

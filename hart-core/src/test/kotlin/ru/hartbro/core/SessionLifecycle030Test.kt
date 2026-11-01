@@ -26,8 +26,9 @@ class SessionLifecycle030Test {
         engine.start(automaticSession = false); runCurrent(); advanceTimeBy(60000); runCurrent()
         assertEquals(MonitorPhase.READY, engine.state.value.phase); assertTrue(engine.state.value.bluetoothConnected)
         assertNull(engine.state.value.startedAt); assertEquals(0, begins); assertEquals(0, samples)
+        val beforeStart=identifies
         engine.startSession(); engine.startSession(); runCurrent()
-        assertEquals(1, begins); assertTrue(samples > 0); assertEquals(2, identifies)
+        assertEquals(1, begins); assertTrue(samples > 0); assertEquals(beforeStart+1, identifies)
         assertNotNull(engine.state.value.startedAt); engine.stop()
     }
     @Test fun newSessionReusesBluetoothButRechecksIdentityAndStartsNewHistory() = runTest {
@@ -49,7 +50,7 @@ class SessionLifecycle030Test {
         engine.start(false); runCurrent(); engine.startSession(); runCurrent()
         engine.pause(true); assertEquals(MonitorPhase.PAUSED, engine.state.value.phase)
         engine.pause(false); assertEquals(MonitorPhase.MONITORING, engine.state.value.phase)
-        engine.finishSession(); assertEquals(MonitorPhase.READY, engine.state.value.phase); assertNull(engine.state.value.startedAt)
+        engine.finishSession(); runCurrent(); assertEquals(MonitorPhase.READY, engine.state.value.phase); assertNull(engine.state.value.startedAt)
         id = 2; engine.startSession(); runCurrent()
         assertEquals(listOf(1, 2), devices); assertEquals(1, connects); assertEquals(0, closes); assertEquals(2, resets)
         engine.stop(); assertEquals(1, closes)

@@ -99,7 +99,8 @@ jobs:
           expected |= {'confirmedWriteSurvivesHomeScreenLockAndRecreateWithoutRepeatAndResumesSameSession', 'timeoutAndRestoredPendingJournalUseOnlyVerificationReads', 'walkLocalRangeEditNeverWritesAndExplicitConfigurationKeepsTheBook', 'unknownReadbackPausesPollingAndDeviceReplacementCannotReceivePreparedWrite', 'walkEndAndMonitorTransitionDialogsKeepAllThreeActionsOnSmallLargeFontScreen'}
           expected |= {'retryIdentificationReconnectsClosedRfcommAfterActivityRecreation'}
           expected |= {'compactMonitorOpensFreshDiagnosticsAndRangeReplacesFirstInputOnNarrowScreen', 'chartSeekReenablesFollowAndRecreationRetainsChosenScale', 'compactHistoryDeletesOnlyLocalRecordsAfterConfirmation'}
-          passed = counts['tests'] >= 25 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
+          expected |= {'quickCardHasNoMeasurementsAndMetadataWritesSurviveRecreationWithVerifiedJournal', 'quickReplacementAndRfcommRecoveryKeepNoSessionUntilExplicitButton', 'documentedPressureZeroNeedsConfirmationWritesOnceAndChecksActualPv'}
+          passed = counts['tests'] >= 28 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
           annotation('notice' if passed else 'error', str(counts))
           if not counts['tests']:
               try:

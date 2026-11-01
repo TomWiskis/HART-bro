@@ -38,6 +38,7 @@ class MonitoringService : Service() {
         scope.launch {
             // Diagnostics no longer cause dozens of synchronous notification updates per reply.
             controller.state.map { state ->
+                if(state.editBusy) return@map "Настройка датчика · ${state.sensorEdit?.field?.label.orEmpty()}"
                 if(state.rangeOwned) return@map "Настройка диапазона · ${state.range.message}"
                 if (state.walkActive) {
                     val w=state.walk;val r=w.recovery
@@ -62,7 +63,7 @@ class MonitoringService : Service() {
             var renewed = 0L
             while (isActive) {
                 val state = controller.state.value
-                val working = awaitingStart || state.rangeOwned && state.range.busy || !state.rangeOwned && (state.walkActive && state.walk.phase !in setOf(WalkPhase.DECISION,WalkPhase.STOPPED,WalkPhase.INTERRUPTED) || state.active && !state.walkActive && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.READY, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR))
+                val working = awaitingStart || state.editBusy || state.rangeOwned && state.range.busy || !state.rangeOwned && (state.walkActive && state.walk.phase !in setOf(WalkPhase.DECISION,WalkPhase.STOPPED,WalkPhase.INTERRUPTED) || state.active && !state.walkActive && state.monitor.phase !in setOf(MonitorPhase.IDLE, MonitorPhase.PAUSED, MonitorPhase.DECISION, MonitorPhase.DIFFERENT_DEVICE, MonitorPhase.ERROR))
                 if (working && (wakeLock?.isHeld != true || SystemClock.elapsedRealtime() - renewed >= 300_000)) {
                     wakeLock?.acquire(600_000); renewed = SystemClock.elapsedRealtime()
                 } else if (!working && wakeLock?.isHeld == true) wakeLock?.release()

@@ -4,9 +4,9 @@ import java.time.Instant
 
 /** Freshness is independent of Bluetooth availability and device quality bits. */
 fun measurementFresh(at: Instant?, now: Instant, periodMillis: Long): Boolean = at != null &&
-    java.time.Duration.between(at, now).toMillis() in 0..maxOf(5000, periodMillis * 3)
+    java.time.Duration.between(at, now).toMillis() in 0..maxOf(15_000, periodMillis * 4)
 fun sensorTitle(identity: DeviceIdentity?): String = identity?.let {
-    PassportProfiles().find(it)?.model(it) ?: "HART-датчик · ${it.manufacturerName ?: "производитель неизвестен"} · ${it.uniqueKey}"
+    listOfNotNull(it.manufacturerName ?: it.manufacturerCode?.let { code -> "Производитель 0x%04X".format(code) }, HartDeviceCatalog.model(it) ?: "Тип 0x%04X".format(it.deviceType)).joinToString(" · ")
 } ?: "HART-датчик"
 fun primaryParameter(unit: Int?): String = when(unit) {
     in 1..14, 237 -> "Давление"
@@ -24,5 +24,5 @@ fun rangeChanges(record: RangeRecord): List<String> = buildList {
 
 /** An expected measurement that failed must turn the HART indicator off immediately. */
 fun MonitorState.hartExchangeCurrent(now: Instant): Boolean = bluetoothConnected && identity != null &&
-    (phase == MonitorPhase.READY || phase == MonitorPhase.MONITORING && latest != null) &&
+    (phase == MonitorPhase.READY && identificationResponding || phase == MonitorPhase.MONITORING && latest != null) &&
     measurementFresh(lastHartSuccess, now, periodMillis)

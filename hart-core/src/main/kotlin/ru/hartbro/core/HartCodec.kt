@@ -61,6 +61,12 @@ object HartCodec {
         val body=byteArrayOf(0x82.toByte())+address.bytes+byteArrayOf(35,9)+data
         return ByteArray(preambles){0xFF.toByte()}+body+checksum(body)
     }
+    fun writeSensor(address: HartAddress.Long, command: SensorWrite, preambles: Int = 20): ByteArray {
+        require(preambles in 5..255)
+        val data = command.bytes()
+        val body = byteArrayOf(0x82.toByte()) + address.bytes + byteArrayOf(command.number.toByte(), data.size.toByte()) + data
+        return ByteArray(preambles) { 0xFF.toByte() } + body + checksum(body)
+    }
 
     fun checksum(bytes: ByteArray): Byte = bytes.fold(0) { acc, b -> acc xor b.u8() }.toByte()
 }

@@ -12,7 +12,9 @@ class RangeTransportFixture(private val app:FieldRegressionApplication):HartTran
     @Volatile var open=true;private set
     private fun identity():ByteArray {
         val raw="FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(' ').map{it.toInt(16).toByte()}.toByteArray()
-        raw[9]=(app.hartDeviceId shr 16).toByte();raw[10]=(app.hartDeviceId shr 8).toByte();raw[11]=app.hartDeviceId.toByte();return raw
+        raw[9]=(app.hartDeviceId shr 16).toByte();raw[10]=(app.hartDeviceId shr 8).toByte();raw[11]=app.hartDeviceId.toByte()
+        if(app.viatranProfile){raw[1]=0x32;raw[2]=1;raw[4]=5;raw[5]=2}
+        return raw
     }
     override suspend fun write(bytes:ByteArray) {
         if(!open)throw IOException("Instrumentation: range RFCOMM closed")
@@ -31,13 +33,18 @@ class RangeTransportFixture(private val app:FieldRegressionApplication):HartTran
             if(mode==1)return
         }
         if(frame.command==15 && mode==4 && app.rangeWrites.get()>0)return
+        if(app.sensorMode && frame.command in setOf(18,22,43)) {
+            app.sensorWrites.incrementAndGet()
+            when(frame.command){18->app.sensorTagDate=frame.payload.copyOf();22->app.sensorLongTag=frame.payload.toString(Charsets.ISO_8859_1).trimEnd('\u0000');43->app.sensorPv=0f}
+        }
         val range=app.rangeActual
         val data=when(frame.command) {
             0->identity()
+            1->ByteBuffer.allocate(5).put(12).putFloat(app.sensorPv).array()
             14->ByteBuffer.allocate(16).put(byteArrayOf(0,4,0xD2.toByte())).put(12).putFloat(40f).putFloat(-40f).putFloat(.267f).array()
             15->ByteBuffer.allocate(18).put(1).put(0).put(range.unitCode.toByte()).putFloat(range.upper).putFloat(range.lower).putFloat(.125f).put(0).put(0).put(1).array()
-            20->"TEST-TAG".padEnd(32,'\u0000').toByteArray()
-            13->byteArrayOf(4,32,0xE0.toByte(),0x82.toByte(),8,32)+ByteArray(12){0x82.toByte()}+byteArrayOf(1,2,126)
+            20,22->app.sensorLongTag.padEnd(32,'\u0000').toByteArray()
+            13,18->app.sensorTagDate
             35->ByteBuffer.allocate(9).put(range.unitCode.toByte()).putFloat(range.upper).putFloat(range.lower).array()
             else->byteArrayOf()
         }

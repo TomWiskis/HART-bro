@@ -26,6 +26,8 @@ data class Communicator(val name: String, val address: String, val likelyViator:
 data class SensorDiagnostics(val identity: DeviceIdentity, val configuration: ConfigurationSnapshot,
     val measurements: MeasurementBatch?, val range: RangeSnapshot? = null, val errors: List<String> = emptyList())
 data class SessionState(
+    val sensorEdit: SensorEdit? = null, val editConfirm: Boolean = false, val editBusy: Boolean = false, val editError: String? = null,
+    val sensorRecords: List<SensorRecord> = emptyList(),
     val communicator: Communicator? = null, val chartViewport: ChartViewport = ChartViewport(),
     val diagnosticVisible: Boolean = false, val diagnosticLoading: Boolean = false,
     val sensorDiagnostics: SensorDiagnostics? = null, val diagnosticError: String? = null,
@@ -57,6 +59,7 @@ class SessionController(private val app: Application, private val connectionFact
     private var walkObserver: Job? = null
     private var communicator: Communicator? = null
     val rangeJournal=RangeJournal(File(app.filesDir,"range-operations"))
+    val sensorJournal=SensorJournal(File(app.filesDir,"sensor-operations"))
     private var rangeEngine:RangeEngine?=null
     private var rangeObserver:Job?=null
     private var rangeContext:ConnectionMode?=null
@@ -70,7 +73,7 @@ class SessionController(private val app: Application, private val connectionFact
     @Volatile private var socketState = "нет соединения"
     @Volatile private var serviceLease = 0L
     private val adapter get() = app.getSystemService(BluetoothManager::class.java)?.adapter
-    init { history.cleanOrphans(); scope.launch { runCatching{rangeJournal.recoverInterrupted()}.onFailure{notice("Журнал записей: ${it.message}")};refreshRangeRecords() };refreshArchives(); refreshWalks();mutableState.update { it.copy(walkDraftAvailable = walkStore.hasDraft()) } }
+    init { history.cleanOrphans(); scope.launch { runCatching{rangeJournal.recoverInterrupted();sensorJournal.recoverInterrupted()}.onFailure{notice("Журнал записей: ${it.message}")};refreshRangeRecords() };refreshArchives(); refreshWalks();mutableState.update { it.copy(walkDraftAvailable = walkStore.hasDraft()) } }
     fun append(entry: DiagnosticEntry) {
         if (entry.kind == "TX-FRAME") lastTx = entry.time
         if (entry.kind == "RX-CHUNK" || entry.kind == "RX-FRAME") lastRx = entry.time
@@ -170,7 +173,12 @@ class SessionController(private val app: Application, private val connectionFact
         engine = newEngine
         observer = scope.launch { newEngine.state.collect { monitor ->
             val old = state.value.monitor
-            mutableState.update { it.copy(monitor = monitor) }
+            val oldIdentity=old.identity;val newIdentity=monitor.identity
+            val changed=oldIdentity!=null && newIdentity!=null && passportKey(oldIdentity)!=passportKey(newIdentity)
+            mutableState.update { it.copy(monitor = monitor,
+                sensorDiagnostics=if(changed)null else it.sensorDiagnostics,
+                diagnosticError=if(changed && it.diagnosticVisible)"Подключён другой датчик. Обновите диагностику" else it.diagnosticError,
+                sensorEdit=if(changed && !it.editBusy)null else it.sensorEdit) }
             if (old.phase != monitor.phase) append(DiagnosticEntry(Instant.now(), "STATE", "${old.phase} → ${monitor.phase}: ${monitor.message}; socket=$socketState; lastTX=$lastTx; lastRX=$lastRx; lastMeasurement=$lastMeasurement"))
         } }
         newEngine.start(automaticSession = false)
@@ -207,6 +215,7 @@ class SessionController(private val app: Application, private val connectionFact
             override suspend fun applyRange(prepared:RangeSnapshot,requested:ConfiguredRange,beforeSend:(ByteArray)->Unit,onReply:(HartExchange)->Unit,onInvalidRx:(ByteArray)->Unit)=RangeOperations(client).apply(prepared,requested,beforeSend,onReply,onInvalidRx)
             override suspend fun verifyRange(expected:DeviceIdentity)=RangeOperations(client).verify(expected).also{identity=it.identity}
             override suspend fun configuration() = readConfiguration(client,identity,::event)
+            override suspend fun editSensor(edit: SensorEdit, journal: SensorJournal) = SensorOperations(client).apply(edit,journal)
             override suspend fun discover(): MeasurementBatch {
                 reader=MeasurementReader(client,identity,::event);readerClient=client;return reader!!.discover()
             }
@@ -225,6 +234,54 @@ class SessionController(private val app: Application, private val connectionFact
         if (!rangeLeaseActive && !state.value.walkActive) engine?.retryIdentification()
     } } }
     fun chartViewport(value: ChartViewport) { mutableState.update { it.copy(chartViewport = value) } }
+    fun openSensorEdit(field: SensorField) {
+        val s=state.value
+        if(s.editBusy || s.rangeOwned || s.walkActive || s.diagnosticLoading) { notice("Дождитесь завершения текущей операции");return }
+        val identity=s.monitor.identity ?: return
+        val config=s.sensorDiagnostics?.takeIf { passportKey(it.identity)==passportKey(identity) }?.configuration ?: s.monitor.configuration
+        if(field==SensorField.ZERO && ZeroProfiles().find(identity)==null) { notice("Поддержка установки нуля для этой модели и ревизии пока не подтверждена. Команда не отправлена");return }
+        val original=when(field) { SensorField.TAG->config.parameters["tag"]?.value.orEmpty();SensorField.LONG_TAG->config.parameters["longTag"]?.value.orEmpty();SensorField.DATE->config.productionDate?.let(HartDate::format).orEmpty();SensorField.ZERO->"" }
+        mutableState.update { it.copy(sensorEdit=SensorEdit(identity,field,original,original),editConfirm=field==SensorField.ZERO,editError=null) }
+    }
+    fun closeSensorEdit() { if(!state.value.editBusy)mutableState.update { it.copy(sensorEdit=null,editConfirm=false,editError=null) } }
+    fun prepareSensorEdit(value: String) {
+        val edit=state.value.sensorEdit ?: return
+        runCatching {
+            when(edit.field) { SensorField.TAG->SensorWrite.TagDate.changeTag(ByteArray(21),value);SensorField.LONG_TAG->SensorWrite.LongTag(value);SensorField.DATE->HartDate.parse(value);SensorField.ZERO->Unit }
+            require(value!=edit.original || edit.field==SensorField.ZERO) { "Значение не изменено" }
+        }.onSuccess { mutableState.update { it.copy(sensorEdit=edit.copy(requested=value),editConfirm=true,editError=null) } }
+            .onFailure { error->mutableState.update { it.copy(editError=error.message) } }
+    }
+    fun confirmSensorEdit() {
+        val s=state.value;val edit=s.sensorEdit ?: return
+        if(s.editBusy || !s.editConfirm)return
+        mutableState.update { it.copy(editBusy=true,editError=null) }
+        scope.launch { archiveActions.withLock {
+            var conn:MonitorConnection?=null;var acquired=false;var verification:RangeVerification?=null;var different=false;var resume=true
+            try {
+                check(!rangeLeaseActive && !state.value.walkActive) { "Коммуникатор занят" }
+                val owner=engine ?: error("Нет подключения")
+                check(owner.state.value.identity?.let(::passportKey)==passportKey(edit.identity)) { "Датчик заменён. Откройте редактор заново" }
+                conn=owner.acquireConfiguration();acquired=true
+                check(conn?.isOpen==true) { "Bluetooth отключён. Дождитесь восстановления соединения" }
+                val result=conn!!.editSensor(edit,sensorJournal)
+                different=result.identity?.let { passportKey(it)!=passportKey(edit.identity) } ?: false
+                resume=!different && result.identity!=null && (result.configuration!=null || result.record.succeeded)
+                val updated=owner.state.value.configuration.copy(parameters=owner.state.value.configuration.parameters+result.configuration?.parameters.orEmpty(),
+                    responses=owner.state.value.configuration.responses.filterNot { old->result.configuration?.responses?.any{it.command==old.command}==true }+result.configuration?.responses.orEmpty())
+                if(result.configuration!=null && updated.range!=null)verification=RangeVerification(edit.identity,updated)
+                mutableState.update { it.copy(sensorDiagnostics=it.sensorDiagnostics?.copy(configuration=updated),notice=if(result.record.succeeded) "${edit.field.label}: подтверждено чтением" else "Результат не подтверждён: ${result.record.error}",sensorEdit=null,editConfirm=false) }
+            } catch(e:CancellationException) { throw e }
+            catch(e:Exception) { if(e is RangeDeviceChanged){different=true;resume=false};mutableState.update { it.copy(editError=e.message ?: "Операция не выполнена",editConfirm=false) } }
+            finally {
+                if(acquired)runCatching { engine?.releaseConfiguration(conn,verification,resume,"Настройка параметров завершена",different) }
+                mutableState.update { it.copy(editBusy=false) };refreshRangeRecords()
+            }
+        } }
+    }
+    fun deleteSensorRecord(id:String) { scope.launch { archiveActions.withLock {
+        if(!state.value.editBusy)runCatching { sensorJournal.delete(id) }.onSuccess { refreshRangeRecords() }.onFailure { notice("Удаление: ${it.message}") }
+    } } }
     fun closeSensorDiagnostics() { mutableState.update { it.copy(diagnosticVisible = false) } }
     fun openSensorDiagnostics() {
         if (state.value.diagnosticLoading) return
@@ -264,7 +321,7 @@ class SessionController(private val app: Application, private val connectionFact
     }
     fun deleteRangeRecord(id: String? = null) { scope.launch { archiveActions.withLock {
         if(rangeLeaseActive || state.value.range.busy) { notice("Дождитесь завершения операции"); return@withLock }
-        runCatching { if(id == null) rangeJournal.deleteAll() else rangeJournal.delete(id) }
+        runCatching { if(id == null) { rangeJournal.deleteAll();sensorJournal.deleteAll() } else rangeJournal.delete(id) }
             .onSuccess {
                 mutableState.update { it.copy(range=if(id==null || it.range.record?.id==id) it.range.copy(record=null,phase=if(it.range.phase==RangePhase.RESULT)RangePhase.CLOSED else it.range.phase) else it.range) }
                 refreshRangeRecords()
@@ -391,7 +448,7 @@ class SessionController(private val app: Application, private val connectionFact
     fun cancelRangeConfirmation(){rangeEngine?.cancelConfirmation()}
     fun confirmRange(token:String){if(rangeLeaseActive)rangeEngine?.confirm(token)}
     fun moreRangeRecords(){rangeRecordLimit+=100;refreshRangeRecords()}
-    fun refreshRangeRecords(){scope.launch{runCatching{rangeJournal.list(rangeRecordLimit)}.onSuccess{records->mutableState.update{it.copy(rangeRecords=records)}}.onFailure{notice("Журнал записей: ${it.message}")}}}
+    fun refreshRangeRecords(){scope.launch{runCatching{rangeJournal.list(rangeRecordLimit) to sensorJournal.list(rangeRecordLimit)}.onSuccess{(records,sensor)->mutableState.update{it.copy(rangeRecords=records,sensorRecords=sensor)}}.onFailure{notice("Журнал записей: ${it.message}")}}}
     fun writeRangeReport(id:String,output:OutputStream){val record=rangeEngine?.state?.value?.record?.takeIf{it.id==id} ?: rangeJournal.load(id);output.write(record.text().toByteArray(Charsets.UTF_8))}
     fun chooseMode(mode: ConnectionMode) { mutableState.update { it.copy(requestedMode=mode) } }
     fun requestWalk(saveSession: Boolean? = null) { scope.launch { archiveActions.withLock {

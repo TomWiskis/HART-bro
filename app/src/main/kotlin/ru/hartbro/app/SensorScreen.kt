@@ -1,9 +1,11 @@
 package ru.hartbro.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
@@ -37,17 +39,19 @@ private val success = Color(0xFF168047)
         else Text(if(connected) "✓" else "✕",color=color)
     }
 }
-@Composable internal fun SensorHeading(state: SessionState) {
+@Composable internal fun SensorHeading(state: SessionState,showType:Boolean=true) {
     val m=state.monitor
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(Unit) { while(true) { kotlinx.coroutines.delay(1000); now=Instant.now() } }
     val good=m.hartExchangeCurrent(now)
-    Text("${sensorTitle(m.identity)}  ${if(good) "✓" else "✕"}",color=if(good)success else MaterialTheme.colorScheme.error,
+    val title=if(showType)sensorTitle(m.identity) else m.identity?.let{listOfNotNull(it.manufacturerName,HartDeviceCatalog.model(it)).joinToString(" · ").ifBlank{"HART-датчик"}} ?: "HART-датчик"
+    Text("$title  ${if(good) "✓" else "✕"}",color=if(good)success else MaterialTheme.colorScheme.error,
         style=MaterialTheme.typography.titleMedium,modifier=Modifier.testTag("sensorStatus"))
     val r=m.recovery
     if(r!=null) {
         Text("Переподключение · ${(r.remainingMillis+999)/1000} с",modifier=Modifier.testTag("recoveryCountdown"))
         Text("Причина: ${when(r.reason){LossReason.BLUETOOTH->"потеря Bluetooth";LossReason.HART->"нет ответа HART";else->"не определена"}}")
+        Text(r.lastAttempt,style=MaterialTheme.typography.bodySmall)
     } else if(!good) { Text(when(m.phase){MonitorPhase.PAUSED->"Опрос приостановлен";MonitorPhase.DECISION->"Связь не восстановлена";else->m.message.takeUnless{it=="Ответ HART получен"} ?: "Нет актуального ответа HART"}) }
 }
 @Composable private fun ReadingCard(label:String,value:String,stale:Boolean,tag:String) {
@@ -61,6 +65,7 @@ private val success = Color(0xFF168047)
 @Composable internal fun MonitorScreen(state:SessionState,c:SessionController) {
     if(state.walkActive) { Text("VIATOR занят обходом. Завершите обход для мониторинга."); return }
     val m=state.monitor
+    if(m.startedAt==null) { QuickSensorCard(state,c); return }
     SensorHeading(state)
     Button(onClick=c::openSensorDiagnostics,enabled=m.identity!=null && !state.rangeOwned && m.phase in setOf(MonitorPhase.READY,MonitorPhase.MONITORING,MonitorPhase.PAUSED),modifier=Modifier.testTag("openDiagnostics")){Text("Открыть диагностику")}
     val batch=m.latest ?: m.lastKnown
@@ -76,19 +81,53 @@ private val success = Color(0xFF168047)
     if(m.startedAt!=null) key(m.startedAt){MonitoringChart(c.history,null,m.revision,m.latest,m.configuration.range?.label ?: "Диапазон недоступен",m.periodMillis,state.chartViewport,c::chartViewport)}
     else Text("Начните сессию для записи графика")
 }
+@Composable private fun QuickSensorCard(state:SessionState,c:SessionController) {
+    val m=state.monitor
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(Unit) { while(true) { kotlinx.coroutines.delay(1000); now=Instant.now() } }
+    val good=m.hartExchangeCurrent(now)
+    val ready=m.identity!=null && m.phase==MonitorPhase.READY && !state.rangeOwned && !state.editBusy
+    val config=m.configuration
+    Card(Modifier.fillMaxWidth().testTag("quickSensorCard")) {
+        Column(Modifier.padding(10.dp),horizontalAlignment=Alignment.CenterHorizontally) {
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).clickable(enabled=ready,onClick=c::openSensorDiagnostics).testTag("quickSensorInfo")) {
+                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        Canvas(Modifier.size(9.dp).semantics { contentDescription=if(good) "Датчик отвечает" else "Датчик не отвечает" }) { drawCircle(if(good)success else Color(0xFFBA1A1A)) }
+                        Text(sensorTitle(m.identity)+(config.tag?.let{" ($it)"} ?: ""),style=MaterialTheme.typography.titleSmall,modifier=Modifier.testTag("sensorStatus"))
+                    }
+                    val numbers=listOfNotNull(m.identity?.deviceId?.toString(),config.productionDate?.let(HartDate::format))
+                    if(numbers.isNotEmpty())Text(numbers.joinToString("   "),style=MaterialTheme.typography.labelSmall,modifier=Modifier.padding(start=15.dp).testTag("quickSensorNumbers"))
+                }
+                IconButton(onClick={c.openRange()},enabled=ready && config.range!=null,modifier=Modifier.size(32.dp).testTag("quickRangeEdit")) { Text("✎",style=MaterialTheme.typography.titleLarge) }
+                config.range?.let{Text(it.label,style=MaterialTheme.typography.bodySmall)}
+            }
+            TextButton(onClick={c.openSensorEdit(SensorField.ZERO)},enabled=ready && good,modifier=Modifier.testTag("setSensorZero")){Text("Установить ноль")}
+            Button(onClick=c::beginSession,enabled=ready && good,modifier=Modifier.testTag("startSession")){Text("Начать измерительную сессию")}
+        }
+    }
+    if(!good) {
+        val recovery=m.recovery
+        Text(if(recovery!=null) "Переподключение · ${(recovery.remainingMillis+999)/1000} с" else m.message,
+            color=MaterialTheme.colorScheme.error,modifier=Modifier.testTag(if(recovery!=null)"recoveryCountdown" else "quickSensorError"))
+        recovery?.lastAttempt?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
+    }
+    Button(onClick=c::openSensorDiagnostics,enabled=ready,modifier=Modifier.testTag("openDiagnostics")){Text("Открыть диагностику")}
+}
 @Composable internal fun SensorDiagnosticsScreen(state:SessionState,c:SessionController) {
     Text("Диагностика датчика",style=MaterialTheme.typography.titleLarge,modifier=Modifier.testTag("sensorDiagnostics"))
-    SensorHeading(state)
+    SensorHeading(state,showType=false)
     if(state.diagnosticLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
     state.diagnosticError?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+    state.notice?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
     val d=state.sensorDiagnostics
     if(d!=null) {
         val i=d.identity; val config=d.configuration
         Text("Информация об устройстве",style=MaterialTheme.typography.titleMedium)
         Text("Производитель: ${i.manufacturerDescription}")
-        Text("Модель: ${PassportProfiles().find(i)?.model(i) ?: "не определена"}")
+        HartDeviceCatalog.model(i)?.let{Text("Модель: $it")}
         Text("Device Type: 0x%04X".format(i.deviceType),modifier=Modifier.testTag("deviceType"))
-        Text("Идентификатор: ${i.uniqueKey}\nHART Revision: ${i.hartRevision}\nВерсия ПО: ${i.softwareRevision}\nРевизия устройства: ${i.deviceRevision}")
+        Text("Серийный номер: ${i.deviceId}\nHART Revision: ${i.hartRevision}\nВерсия ПО: ${i.softwareRevision}\nРевизия устройства: ${i.deviceRevision}")
         Text("Параметры измерения",style=MaterialTheme.typography.titleMedium)
         d.measurements?.let{b->
             b.values.filter{it.quality!=Quality.ABSENT}.forEach{v->Text("${v.slot}: ${if(v.value.isFinite()) "${v.value} ${v.unit}" else "Нет данных"} · ${qualityText(v.quality)}")}
@@ -96,7 +135,10 @@ private val success = Color(0xFF168047)
             Text("Состояние: ${HartStatus.deviceDescription(b.deviceStatus)}")
         } ?: Text("Измерения недоступны")
         Text("Конфигурация",style=MaterialTheme.typography.titleMedium)
-        Text("TAG: ${config.tag ?: d.range?.tag ?: "не получен"}")
+        EditableSensorRow("TAG: ${config.parameters["tag"]?.value ?: "не получен"}",!state.diagnosticLoading && !state.editBusy && config.parameters.containsKey("tag"),"editShortTag"){c.openSensorEdit(SensorField.TAG)}
+        if(i.hartRevision>=6 && config.parameters.containsKey("longTag"))EditableSensorRow("Длинный TAG: ${config.parameters["longTag"]?.value.orEmpty()}",!state.diagnosticLoading && !state.editBusy,"editLongTag"){c.openSensorEdit(SensorField.LONG_TAG)}
+        EditableSensorRow("Дата производства: ${config.productionDate?.let(HartDate::format) ?: "не заполнена"}",!state.diagnosticLoading && !state.editBusy && config.parameters.containsKey("deviceDateRaw"),"editProductionDate"){c.openSensorEdit(SensorField.DATE)}
+        Text("Дата хранится в редактируемом поле HART Date; её можно заполнить по шильду.",style=MaterialTheme.typography.bodySmall)
         Text("Защита записи: ${when(config.parameters["writeProtect"]?.value){"0"->"отключена";"1"->"включена";else->"неизвестна"}}")
         Text("Диапазон: ${config.range?.label ?: "недоступен"}")
         d.range?.sensor?.let { sensor ->
@@ -104,7 +146,6 @@ private val success = Color(0xFF168047)
             sensor.minimumSpan?.let{Text("Минимальная ширина: $it ${HartUnits.find(sensor.unitCode)?.symbol ?: sensor.unitCode}")}
         }
         Button(onClick={c.openRange()},enabled=!state.diagnosticLoading && !state.rangeOwned && config.range!=null && config.parameters["writeProtect"]?.value!="1",modifier=Modifier.testTag("openRange")){Text("Настроить диапазон")}
-        Text("Остальные параметры доступны для чтения")
         config.parameters.filterKeys{it in setOf("description","damping","transferFunction","alarm")}.forEach{(k,v)->Text("${configurationNames[k]}: ${v.value}")}
         Text("Состояние и ошибки",style=MaterialTheme.typography.titleMedium)
         config.responses.mapNotNull{it.error}.forEach{Text(it)}
@@ -112,4 +153,27 @@ private val success = Color(0xFF168047)
         d.errors.forEach{Text(it,color=MaterialTheme.colorScheme.error)}
     }
     OutlinedButton(onClick=c::openSensorDiagnostics,enabled=!state.diagnosticLoading){Text("Обновить диагностику")}
+}
+
+@Composable private fun EditableSensorRow(label:String,enabled:Boolean,tag:String,onClick:()->Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled=enabled,onClick=onClick).padding(vertical=8.dp).testTag(tag),verticalAlignment=Alignment.CenterVertically) {
+        Text(label,Modifier.weight(1f));if(enabled)Text("✎")
+    }
+}
+@Composable internal fun SensorEditDialog(state:SessionState,c:SessionController) {
+    val edit=state.sensorEdit ?: return
+    var value by rememberSaveable(edit.identity.uniqueKey,edit.field,edit.original) { mutableStateOf(edit.requested) }
+    ActionDialog(if(state.editConfirm)"Подтвердить: ${edit.field.label}" else edit.field.label,c::closeSensorEdit,"sensorEditDialog",content={
+        Text("${sensorTitle(edit.identity)} · ${edit.identity.deviceId}")
+        if(edit.field==SensorField.ZERO) {
+            Text("Подайте нулевое избыточное / дифференциальное давление. Для абсолютного датчика требуется эталонный вакуум. Изолируйте влияние на автоматику перед настройкой.")
+            Text("После одной команды установки нуля приложение проверит PV тремя чтениями. Допуск проверки — 0,01 % ширины пределов сенсора.")
+        } else if(state.editConfirm)Text("${edit.original.ifBlank{"не заполнено"}} → ${edit.requested}")
+        else OutlinedTextField(value,{value=it},singleLine=true,label={Text(if(edit.field==SensorField.DATE)"ДД.ММ.ГГГГ · по шильду" else edit.field.label)},modifier=Modifier.fillMaxWidth().testTag("sensorEditValue"))
+        state.editError?.let{Text(it,color=MaterialTheme.colorScheme.error,modifier=Modifier.testTag("sensorEditError"))}
+        if(state.editBusy)LinearProgressIndicator(Modifier.fillMaxWidth())
+    },actions={
+        Button(onClick={if(state.editConfirm)c.confirmSensorEdit() else c.prepareSensorEdit(value)},enabled=!state.editBusy,modifier=Modifier.fillMaxWidth().testTag("sensorEditApply")) { Text(if(state.editConfirm)"Да, записать и проверить" else "Продолжить") }
+        TextButton(onClick=c::closeSensorEdit,enabled=!state.editBusy,modifier=Modifier.fillMaxWidth()){Text("Отмена")}
+    })
 }

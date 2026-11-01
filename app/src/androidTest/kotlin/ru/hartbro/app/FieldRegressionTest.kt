@@ -29,6 +29,12 @@ import ru.hartbro.core.*
 class FieldRegressionApplication : HartApplication() {
     val walkPassportReads=AtomicInteger(); val walkBluetoothFailures=AtomicInteger(); val samples = AtomicInteger(); val connections = AtomicInteger(); val hartFailures = AtomicInteger(); val bluetoothFailures = AtomicInteger()
     val rangeWrites=AtomicInteger()
+    val sensorWrites=AtomicInteger()
+    @Volatile var sensorMode=false
+    @Volatile var viatranProfile=false
+    @Volatile var sensorPv=.25f
+    @Volatile var sensorLongTag="TEST-TAG"
+    @Volatile var sensorTagDate=byteArrayOf(4,32,0xE0.toByte(),0x82.toByte(),8,32)+ByteArray(12){0x82.toByte()}+byteArrayOf(1,2,126)
     @Volatile var rangeActual=ConfiguredRange(0f,40f,12)
     @Volatile var rangeMode=0
     @Volatile var rangeAckDelay=0L
@@ -46,7 +52,9 @@ class FieldRegressionApplication : HartApplication() {
             init { closeRfcomm = { close() } }
             override fun onDisconnect(listener: () -> Unit) { disconnected = listener; if (!isOpen) listener() }
             private val rangeWire=RangeTransportFixture(this@FieldRegressionApplication)
-            private val rangeOperations by lazy{RangeOperations(HartClient(rangeWire,controller::append,timeoutMillis=rangeTimeout,readAttempts=1))}
+            private val sensorClient by lazy{HartClient(rangeWire,controller::append,timeoutMillis=rangeTimeout,readAttempts=1)}
+            private val rangeOperations by lazy{RangeOperations(sensorClient)}
+            override suspend fun editSensor(edit:SensorEdit,journal:SensorJournal)=SensorOperations(sensorClient).apply(edit,journal)
             override val isOpen get() = open && rangeWire.open
             override suspend fun rangeSnapshot()=rangeOperations.prepare()
             override suspend fun applyRange(prepared:RangeSnapshot,requested:ConfiguredRange,beforeSend:(ByteArray)->Unit,onReply:(HartExchange)->Unit,onInvalidRx:(ByteArray)->Unit)=rangeOperations.apply(prepared,requested,beforeSend,onReply,onInvalidRx)
@@ -57,6 +65,7 @@ class FieldRegressionApplication : HartApplication() {
                 if (failIdentity) throw HartTimeoutException("Instrumentation: initial identification timeout")
                 val raw="FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(" ").map { it.toInt(16).toByte() }.toByteArray()
                 raw[9]=(hartDeviceId shr 16).toByte();raw[10]=(hartDeviceId shr 8).toByte();raw[11]=hartDeviceId.toByte()
+                if(viatranProfile){raw[1]=0x32;raw[2]=1;raw[4]=5;raw[5]=2}
                 return DeviceIdentity.parse(raw)
             }
             override suspend fun passport(identity:DeviceIdentity):PassportReading {
@@ -66,7 +75,7 @@ class FieldRegressionApplication : HartApplication() {
                     PassportField.RANGE to PassportFact(range.label,FactSource.STANDARD_HART,15,"00",at)),
                     mapOf("sensorNumber" to PassportFact("1234",FactSource.STANDARD_HART,14,"00 04 D2",at),"assemblyNumber" to PassportFact("5678",FactSource.STANDARD_HART,16,"00 16 2E",at)),range,at)
             }
-            override suspend fun configuration() = ConfigurationSnapshot(mapOf("tag" to ConfigValue("TEST-METRAN", 13),
+            override suspend fun configuration() = if(sensorMode)readConfiguration(sensorClient,identify()) else ConfigurationSnapshot(mapOf("tag" to ConfigValue("TEST-METRAN", 13),
                 "rangeUnit" to ConfigValue("12", 15, 12), "lowerRange" to ConfigValue(rangeActual.lower.toString(),15,12),"upperRange" to ConfigValue(rangeActual.upper.toString(),15,12)))
             override suspend fun discover() = sample()
             override suspend fun sample(): MeasurementBatch {

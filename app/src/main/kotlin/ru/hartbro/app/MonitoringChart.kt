@@ -88,8 +88,8 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
     Canvas(Modifier.fillMaxWidth().height(230.dp).testTag("measurementChart")
         .pointerInput(Unit) { detectTransformGestures { _, offset, zoom, _ ->
             val pan = if (abs(zoom - 1f) > 0.001f) 0f else offset.x / size.width.coerceAtLeast(1)
-            val shifted = gestureViewport.transform(gestureStart, gestureEnd, 1f, pan)
-            changeViewport(if (!shifted.following && gestureEnd - shifted.bounds(gestureStart,gestureEnd).last <= periodMillis.coerceAtLeast(1000)) shifted.follow() else shifted)
+            val shifted = gestureViewport.transform(gestureStart, gestureEnd, zoom, pan)
+            changeViewport(if (abs(pan)>0.00001f && !shifted.following && gestureEnd - shifted.bounds(gestureStart,gestureEnd).last <= periodMillis.coerceAtLeast(1000)) shifted.follow() else shifted)
         } }
         .pointerInput(visible, lo, hi) { detectTapGestures { offset ->
             val left = ((groups.size + 1) / 2 * 49 + 6).dp.toPx()
@@ -150,9 +150,15 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
         FilterChip(modifier = Modifier.testTag("chartFollow"), selected = viewport.following, onClick = { changeViewport(if (viewport.following) viewport.copy(following = false, endMillis = hi) else viewport.follow()) }, label = { Text("Следовать") })
         if (archiveId != null) OutlinedButton(onClick = { changeViewport(viewport.all(false)) }) { Text("Вся сессия") }
     }
-    Slider(value = if (end > start) ((hi - start).toDouble() / (end - start)).toFloat().coerceIn(0f, 1f) else 1f,
+    var seekDomain by remember { mutableStateOf<LongRange?>(null) }
+    var seekFraction by remember { mutableStateOf<Float?>(null) }
+    Slider(value = seekFraction ?: if (end > start) ((hi - start).toDouble() / (end - start)).toFloat().coerceIn(0f, 1f) else 1f,
         modifier = Modifier.testTag("chartSeek"), enabled = end > start,
-        onValueChange = { changeViewport(viewport.seek(start, end, it, periodMillis.coerceAtLeast(1000))) })
+        onValueChange = {
+            val domain=seekDomain ?: (start..end).also { seekDomain=it }
+            seekFraction=it
+            changeViewport(viewport.seek(domain.first,domain.last,it,periodMillis.coerceAtLeast(1000)))
+        },onValueChangeFinished = { seekDomain=null;seekFraction=null })
     Text("${ChartAxes.timeLabel(lo, widthMillis)} — ${ChartAxes.timeLabel(hi, widthMillis)} · ${if(viewport.spanMillis==Long.MAX_VALUE) "Вся сессия" else "${viewport.spanMillis / 1000} с"}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chartWindow"))
     TextButton(onClick = { eventsExpanded = !eventsExpanded }) { Text(if (eventsExpanded) "Скрыть события" else "События сессии") }
     if (eventsExpanded) data.events.forEach { (at, text) -> Text("${timeLabel(at)} · $text", style = MaterialTheme.typography.bodySmall) }

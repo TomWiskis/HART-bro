@@ -66,10 +66,12 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
                 Box {
                     TextButton(onClick={unitsOpen=true},modifier=Modifier.widthIn(max=90.dp).testTag("rangeUnits")){Text("${rangeUnit(unit)} ▾")}
                     DropdownMenu(expanded=unitsOpen,onDismissRequest={unitsOpen=false}) {
-                        snapshot.writableUnits.sorted().forEach { target -> DropdownMenuItem(text={Text(rangeUnit(target))},onClick={
-                            if(target!=unit) runCatching { convertRange(ConfiguredRange(RangeRules.parse(lower.text),RangeRules.parse(upper.text),unit),target) }
-                                .onSuccess{lower=TextFieldValue(it.lower.toString());upper=TextFieldValue(it.upper.toString());unit=target}
-                                .onFailure{c.notice(it.message ?: "Преобразование недоступно")}
+                        (listOf(snapshot.range.unitCode)+(1..249).toList()+253).distinct().forEach { target -> DropdownMenuItem(text={Text(rangeUnit(target))},onClick={
+                            if(target!=unit) {
+                                runCatching { convertRange(ConfiguredRange(RangeRules.parse(lower.text),RangeRules.parse(upper.text),unit),target) }
+                                    .onSuccess{lower=TextFieldValue(it.lower.toString());upper=TextFieldValue(it.upper.toString())}
+                                unit=target
+                            }
                             unitsOpen=false
                         }) }
                     }
@@ -79,7 +81,7 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
                 TextButton(onClick={val value=if(lower.text.startsWith('-'))lower.text.drop(1) else "-${lower.text}";lower=TextFieldValue(value,TextRange(value.length))}){Text("± Низ")}
                 TextButton(onClick={val value=if(upper.text.startsWith('-'))upper.text.drop(1) else "-${upper.text}";upper=TextFieldValue(value,TextRange(value.length))}){Text("± Верх")}
             }
-            if(snapshot.writableUnits.size==1)Text("Поддержка записи других единиц этим прибором не подтверждена. Сохраняется текущая единица.",style=MaterialTheme.typography.bodySmall)
+            if(unit !in snapshot.writableUnits)Text("Поддержка записи выбранной единицы этим прибором не подтверждена. Запись недоступна.",style=MaterialTheme.typography.bodySmall)
             validation.errors.forEach{Text(it,color=MaterialTheme.colorScheme.error)}
             validation.warnings.forEach{Text(it,style=MaterialTheme.typography.bodySmall)}
             if(validation.unchanged)Text("Новый диапазон совпадает с текущим. Запись не требуется.")
@@ -101,7 +103,8 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
     if(r.phase==RangePhase.CLOSED)Text("Настройка открывается из карточки подключённого прибора. История доступна без подключения.")
     }
     HorizontalDivider();Text("Журнал операций настройки",style=MaterialTheme.typography.titleMedium)
-    if(state.rangeRecords.isEmpty())Text("Операций записи пока нет")
+    if(state.rangeRecords.isEmpty() && state.sensorRecords.isEmpty())Text("Операций записи пока нет")
+    SensorChangeHistory(state,c)
     var details by rememberSaveable{mutableStateOf<String?>(null)}
     var deleteId by remember{mutableStateOf<String?>(null)}
     var clearAll by remember{mutableStateOf(false)}
@@ -113,7 +116,7 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     Text(DateTimeFormatter.ofPattern("dd.MM\nHH:mm").withZone(ZoneId.systemDefault()).format(record.time),style=MaterialTheme.typography.labelSmall)
                     Column(Modifier.weight(1f)){rangeChanges(record).forEach{Text(it,style=MaterialTheme.typography.bodySmall)}}
-                    Text(if(succeeded) "✓" else if(uncertain) "?" else "✕",color=if(succeeded)Color(0xFF168047) else if(uncertain)MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    Text(if(succeeded) "✓" else "✕",color=if(succeeded)Color(0xFF168047) else MaterialTheme.colorScheme.error,
                         modifier=Modifier.testTag("rangeOutcome-${record.outcome}").semantics{contentDescription=if(succeeded)"Подтверждено" else if(uncertain)"Результат не подтверждён полностью" else "Не выполнено"})
                 }
                 if(details==record.id) {
@@ -126,12 +129,12 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
             }
         }
     }
-    if(state.rangeRecords.isNotEmpty())TextButton(onClick={clearAll=true},enabled=!state.rangeOwned && !r.busy,modifier=Modifier.testTag("clearRangeHistory")){Text("Удалить всю историю изменений")}
+    if(state.rangeRecords.isNotEmpty() || state.sensorRecords.isNotEmpty())TextButton(onClick={clearAll=true},enabled=!state.rangeOwned && !r.busy && !state.editBusy,modifier=Modifier.testTag("clearRangeHistory")){Text("Удалить всю историю изменений")}
     if(deleteId!=null || clearAll) ActionDialog(if(clearAll) "Удалить всю историю изменений?" else "Удалить запись?",{deleteId=null;clearAll=false},"deleteRangeDialog",content={Text("Удаляются только записи приложения. Конфигурация датчика не меняется.")},actions={
         Button(onClick={c.deleteRangeRecord(if(clearAll)null else deleteId);deleteId=null;clearAll=false},modifier=Modifier.fillMaxWidth().testTag("confirmDeleteRange")){Text("Удалить")}
         TextButton(onClick={deleteId=null;clearAll=false},modifier=Modifier.fillMaxWidth()){Text("Отмена")}
     })
-    if(state.rangeRecords.size>=100)TextButton(onClick=c::moreRangeRecords){Text("Показать более ранние операции")}
+    if(state.rangeRecords.size>=100 || state.sensorRecords.size>=100)TextButton(onClick=c::moreRangeRecords){Text("Показать более ранние операции")}
     if(r.phase==RangePhase.CONFIRM && state.rangeVisible) {
         val snapshot=r.snapshot!!;val requested=r.requested!!
         ActionDialog("Подтвердить изменение диапазона",c::cancelRangeConfirmation,"rangeConfirmDialog",content={
@@ -145,4 +148,30 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
             TextButton(onClick=c::cancelRangeConfirmation,modifier=Modifier.fillMaxWidth().testTag("rangeConfirmCancel")){Text("Отмена")}
         })
     }
+}
+
+@Composable private fun SensorChangeHistory(state:SessionState,c:SessionController) {
+    var expanded by remember{mutableStateOf<String?>(null)}
+    var deleteId by remember{mutableStateOf<String?>(null)}
+    state.sensorRecords.forEach { record ->
+        Card(Modifier.fillMaxWidth().clickable{expanded=if(expanded==record.id)null else record.id}.testTag("sensorRecord-${record.id}")) {
+            Column(Modifier.padding(8.dp)) {
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text(DateTimeFormatter.ofPattern("dd.MM\nHH:mm").withZone(ZoneId.systemDefault()).format(record.time),style=MaterialTheme.typography.labelSmall)
+                    Text(record.change,Modifier.weight(1f),style=MaterialTheme.typography.bodySmall)
+                    Text(if(record.succeeded)"✓" else "✕",color=if(record.succeeded)Color(0xFF168047)else MaterialTheme.colorScheme.error,modifier=Modifier.testTag("sensorOutcome-${record.succeeded}"))
+                }
+                if(expanded==record.id) {
+                    record.actual?.let{Text("Прочитано: $it")}
+                    if(record.error.isNotBlank())Text(record.error)
+                    record.responseCode?.let{Text("HART: $it · ${HartStatus.responseDescription(it)}")}
+                    TextButton(onClick={deleteId=record.id},enabled=!state.editBusy,modifier=Modifier.testTag("deleteSensor-${record.id}")){Text("Удалить запись")}
+                }
+            }
+        }
+    }
+    if(deleteId!=null)ActionDialog("Удалить запись?",{deleteId=null},"deleteSensorDialog",content={Text("Удаляется только запись приложения. Настройки датчика не меняются.")},actions={
+        Button(onClick={deleteId?.let(c::deleteSensorRecord);deleteId=null},modifier=Modifier.fillMaxWidth().testTag("confirmDeleteSensor")){Text("Удалить")}
+        TextButton(onClick={deleteId=null}){Text("Отмена")}
+    })
 }

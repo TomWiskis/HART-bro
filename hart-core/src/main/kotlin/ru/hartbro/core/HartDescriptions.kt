@@ -5,6 +5,7 @@ object HartManufacturers {
     fun name(code: Int): String? = when (code) {
         0x0099 -> "Метран"
         0x0026 -> "Rosemount"
+        0x0032 -> "Viatran"
         else -> null
     }
 }
