@@ -1,3 +1,16 @@
+# HART-бро 0.5.1 — повторная идентификация датчика
+
+- [Скачать APK 0.5.1](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.1-debug.apk?download=1), Android 10+, versionCode 9.
+- [Проверки и контрольные суммы](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.1-test-results.zip?download=1).
+- [Успешный CI: 198 JVM / 22 Android, без ошибок и пропусков](https://github.com/TomWiskis/HART-bro/actions/runs/41276156899).
+- [Изменения](https://github.com/TomWiskis/HART-bro/blob/main/docs/CHANGES_0.5.1.md), [подпись и проверка](https://github.com/TomWiskis/HART-bro/blob/main/docs/VALIDATION_0.5.1.md), [проверка на VIATOR](https://github.com/TomWiskis/HART-bro/blob/main/docs/RETEST_0.5.1.md).
+
+После HART-таймаута исправный RFCOMM остаётся открытым. «Повторить опрос датчика» использует его или переподключается к прежнему VIATOR; пересоздание Activity не блокирует повтор. Неполный кадр без XOR не принимается, поздние фрагменты очищаются. Команда 35 по-прежнему отправляется один раз с проверкой результата. Возможности 0.5.0 и форматы данных сохранены.
+
+Подпись совпадает с опубликованной 0.5.0: SHA-256 сертификата `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`. Устанавливайте поверх 0.5.0 без удаления/очистки данных, предварительно сохранив важную текущую сессию/ведомость. Для закрытого репозитория нужен вход в GitHub. Архив проверок содержит локальные JUnit/Lint и подтверждение CI со ссылкой на полные Android JUnit/HTML/PNG.
+
+---
+
 # HART-бро 0.5.0 — настройка PV-диапазона
 
 - [Скачать APK 0.5.0 для Android 10+](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.0-debug.apk?download=1), versionCode 8.
