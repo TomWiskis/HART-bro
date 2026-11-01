@@ -39,18 +39,19 @@ class QuickView053Test {
         ui.onNodeWithTag("quickSensorCard").assertExists()
     }
     private fun edit(tag:String,value:String){
+        val records=c.state.value.sensorRecords.size
         ui.onNodeWithTag(tag).performScrollTo().performClick()
         ui.onNodeWithTag("sensorEditValue").performTextReplacement(value)
         ui.onNodeWithTag("sensorEditApply").performClick()
         ui.onNodeWithTag("sensorEditApply").performClick()
-        waitFor{!c.state.value.editBusy && c.state.value.sensorEdit==null}
+        waitFor{!c.state.value.editBusy && c.state.value.sensorEdit==null && c.state.value.sensorRecords.size==records+1}
     }
     @Test fun quickCardHasNoMeasurementsAndMetadataWritesSurviveRecreationWithVerifiedJournal(){
         ActivityScenario.launch(MainActivity::class.java).use{s->
             connect(s);val samples=app.samples.get();SystemClock.sleep(3500)
             assertEquals(samples,app.samples.get());assertNull(c.state.value.monitor.startedAt)
             ui.onNodeWithTag("primaryReading").assertDoesNotExist();ui.onNodeWithTag("loopReading").assertDoesNotExist()
-            ui.onNodeWithTag("quickSensorNumbers").assertTextContains("6277759   01.02.2026")
+            ui.onNodeWithTag("quickSensorNumbers",useUnmergedTree=true).assertTextContains("6277759   01.02.2026")
             assertTrue(c.state.value.monitor.identificationResponding)
             ui.onNodeWithTag("quickSensorInfo").performClick();waitFor{!c.state.value.diagnosticLoading && c.state.value.sensorDiagnostics!=null}
             edit("editLongTag","NEW-053")
@@ -59,7 +60,7 @@ class QuickView053Test {
             assertEquals(2,app.sensorWrites.get());assertEquals("30.11.2025",c.state.value.monitor.configuration.productionDate?.let(HartDate::format))
             s.recreate();assertEquals(2,app.sensorWrites.get())
             c.closeSensorDiagnostics();waitFor{!c.state.value.diagnosticVisible}
-            ui.onNodeWithTag("quickSensorNumbers").assertTextContains("6277759   30.11.2025")
+            ui.onNodeWithTag("quickSensorNumbers",useUnmergedTree=true).assertTextContains("6277759   30.11.2025")
             c.showRangeHistory();waitFor{c.state.value.rangeVisible}
             val id=c.state.value.sensorRecords.first().id
             ui.onNodeWithTag("sensorRecord-$id").performScrollTo().performClick()
@@ -79,8 +80,10 @@ class QuickView053Test {
             app.closeRfcomm!!.invoke();waitFor{!c.state.value.monitor.bluetoothConnected}
             waitFor{c.state.value.monitor.phase==MonitorPhase.READY && c.state.value.monitor.bluetoothConnected}
             assertEquals(initialConnections+1,app.connections.get());assertEquals(samples,app.samples.get())
-            ui.onNodeWithTag("setSensorZero").performScrollTo().performClick()
-            assertEquals(0,app.sensorWrites.get());assertTrue(c.state.value.notice!!.contains("не подтверждена"))
+            ui.waitForIdle()
+            ui.onNodeWithTag("setSensorZero").performScrollTo().assertIsEnabled().performClick()
+            waitFor{c.state.value.notice?.contains("не подтверждена")==true}
+            assertEquals(0,app.sensorWrites.get())
             s.recreate();ui.onNodeWithTag("startSession").performScrollTo().performClick()
             waitFor{c.state.value.monitor.startedAt!=null && c.state.value.monitor.latest!=null}
             ui.onNodeWithTag("primaryReading").performScrollTo().assertExists();assertEquals(0,app.rangeWrites.get())
