@@ -1,0 +1,75 @@
+{
+  "version": "0.5.1",
+  "versionCode": 9,
+  "sourceCommit": "88337ef77ecfbe2db459618b41ef179942605512",
+  "jvm": {
+    "tests": 198,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "apk": {
+    "bytes": 30015406,
+    "sha256": "6a3aaeb423018cb5ea6913733dd2d0b4b6b1c2a0cfbf73042758e7b86a28f053",
+    "certificateSha256": "263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09",
+    "sameCertificateAsPublished050": true
+  },
+  "export": {
+    "reader": "openpyxl",
+    "sheets": [
+      "Проверка"
+    ],
+    "sourceValues": 269,
+    "timeRows": 68,
+    "exportedNumericValues": 269,
+    "freezePanes": "A12",
+    "tables": {
+      "Devices": "A5:F6",
+      "Measurements": "A11:AI79"
+    },
+    "allValuesRoundTripAsFloat32": true,
+    "numericDates": true,
+    "allQualityAndSourceFieldsMatch": true,
+    "missingVariablesBlank": true,
+    "factoryFactsNotInvented": true,
+    "warnings": []
+  },
+  "walkExport": {
+    "file": "TEST-ONLY-walk-100-devices.xlsx",
+    "synthetic_data_only": true,
+    "sheets": [
+      "Приборы"
+    ],
+    "columns": 5,
+    "devices": 100,
+    "compared_cells": 505,
+    "freeze": "A2",
+    "filter": "A1:E101",
+    "serial_leading_zeros_preserved": true,
+    "date_precision_preserved": true
+  },
+  "android": {
+    "tests": 22,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "apiLevel": 36,
+    "physicalBluetooth": false,
+    "jobId": 124758626033,
+    "allExpectedMethodsPresent": true,
+    "resultsArtifactId": 13072071277,
+    "artifactSha256": "22f23bbd458a3c849f8af53c40741fcaf447e0d29f9c7e60e604dcb246ee882a"
+  },
+  "ci": {
+    "runId": 41276156899,
+    "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41276156899",
+    "headSha": "88337ef77ecfbe2db459618b41ef179942605512",
+    "conclusion": "success",
+    "buildJobId": 124758625846
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 1,
+    "warning": "NewerVersionAvailable (existing)"
+  }
+}
