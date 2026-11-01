@@ -37,7 +37,7 @@ data class SessionState(
     val active: Boolean = false, val detailedDiagnostics: Boolean = false,
     val diagnosticIncomplete: Boolean = false, val serviceRunning: Boolean = false,
     val requestedMode: ConnectionMode = ConnectionMode.MONITOR, val walkActive: Boolean = false,
-    val rangeTransportOpen:Boolean=false, val range:RangeState=RangeState(),val rangeVisible:Boolean=false,val rangeOwned:Boolean=false,val rangeRecords:List<RangeRecord> = emptyList(),
+    val rangeHistoryOnly:Boolean=false, val rangeTransportOpen:Boolean=false, val range:RangeState=RangeState(),val rangeVisible:Boolean=false,val rangeOwned:Boolean=false,val rangeRecords:List<RangeRecord> = emptyList(),
     val walk: WalkState = WalkState(), val savedWalks: List<WalkBook> = emptyList(), val walkDraftAvailable: Boolean = false,
 )
 
@@ -265,7 +265,10 @@ class SessionController(private val app: Application, private val connectionFact
     fun deleteRangeRecord(id: String? = null) { scope.launch { archiveActions.withLock {
         if(rangeLeaseActive || state.value.range.busy) { notice("Дождитесь завершения операции"); return@withLock }
         runCatching { if(id == null) rangeJournal.deleteAll() else rangeJournal.delete(id) }
-            .onSuccess { refreshRangeRecords() }.onFailure { notice("Удаление: ${it.message}") }
+            .onSuccess {
+                mutableState.update { it.copy(range=if(id==null || it.range.record?.id==id) it.range.copy(record=null,phase=if(it.range.phase==RangePhase.RESULT)RangePhase.CLOSED else it.range.phase) else it.range) }
+                refreshRangeRecords()
+            }.onFailure { notice("Удаление: ${it.message}") }
     } } }
     fun beginSession() { scope.launch { archiveActions.withLock { if (rangeLeaseActive || state.value.walkActive) { notice("Сначала завершите настройку или обход");return@withLock };if(engine?.state?.value?.phase == MonitorPhase.READY) chartViewport(ChartViewport());engine?.startSession() ?: notice("Сначала подключите коммуникатор на вкладке «Связь»") } } }
     fun pause(value: Boolean) { scope.launch { archiveActions.withLock { if(!rangeLeaseActive)engine?.pause(value) } } }
@@ -326,8 +329,8 @@ class SessionController(private val app: Application, private val connectionFact
                 bluetoothConnected = false, latest = null, recovery = null, message = if (previous.startedAt != null) "Служба остановлена. Временная история сохранена до вашего решения" else "Служба остановлена. Подключите коммуникатор повторно")) }
         }
     } } }
-    fun showRangeHistory(){mutableState.update{it.copy(rangeVisible=true)};refreshRangeRecords()}
-    fun showRangeResult(){mutableState.update{it.copy(rangeVisible=true)}}
+    fun showRangeHistory(){mutableState.update{it.copy(rangeVisible=true,rangeHistoryOnly=!it.rangeOwned && !it.range.busy)};refreshRangeRecords()}
+    fun showRangeResult(){mutableState.update{it.copy(rangeVisible=true,rangeHistoryOnly=false)}}
     fun openRange(recordId:String?=null,acceptCurrentDevice:Boolean=false) { scope.launch { archiveActions.withLock {
         if(rangeEngine?.state?.value?.busy==true) { showRangeResult();return@withLock }
         try {
@@ -354,7 +357,7 @@ class SessionController(private val app: Application, private val connectionFact
                 } }
             })
             rangeEngine=worker
-            mutableState.update{it.copy(rangeOwned=true,rangeVisible=true,range=worker.state.value,notice=null)}
+            mutableState.update{it.copy(rangeHistoryOnly=false,rangeOwned=true,rangeVisible=true,range=worker.state.value,notice=null)}
             rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r,rangeTransportOpen=r.bluetoothConnected)}}}
             if(record==null) worker.open() else worker.verifyOnly(record)
         } catch(e:Exception) {

@@ -27,7 +27,8 @@ private fun rangeUnit(code:Int)=when(code){11->"Па";12->"кПа";237->"МПа"
 @Composable
 internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)->Unit) {
     val r=state.range
-    Text("Настройка диапазона",style=MaterialTheme.typography.titleLarge)
+    Text(if(state.rangeHistoryOnly) "История изменений" else "Настройка диапазона",style=MaterialTheme.typography.titleLarge)
+    if(!state.rangeHistoryOnly) {
     Text(r.message,modifier=Modifier.testTag("rangeStatus"))
     if(r.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
     if(r.phase==RangePhase.RECOVERING)r.secondsLeft?.let{Text("Переподключение · $it с")}
@@ -93,6 +94,7 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
         if(state.active)Button(onClick={c.openRange(acceptCurrentDevice=true)},modifier=Modifier.testTag("rangeReload")){Text("Повторно считать текущий прибор")}
     }
     if(r.phase==RangePhase.CLOSED)Text("Настройка открывается из карточки подключённого прибора. История доступна без подключения.")
+    }
     HorizontalDivider();Text("Журнал операций настройки",style=MaterialTheme.typography.titleMedium)
     if(state.rangeRecords.isEmpty())Text("Операций записи пока нет")
     var details by rememberSaveable{mutableStateOf<String?>(null)}
