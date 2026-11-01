@@ -220,8 +220,8 @@ class SessionController(private val app: Application, private val connectionFact
                 reader=MeasurementReader(client,identity,::event);readerClient=client;return reader!!.discover()
             }
             override suspend fun sample(): MeasurementBatch {
-                if(reader==null) reader=MeasurementReader(client,identity,::event)
-                if(readerClient !== client) { reader!!.rebind(client);readerClient=client }
+                reader=reader?.forDevice(client,identity) ?: MeasurementReader(client,identity,::event)
+                readerClient=client
                 if(!reader!!.discovered) reader!!.discover()
                 return reader!!.sample()
             }
@@ -252,7 +252,7 @@ class SessionController(private val app: Application, private val connectionFact
         }.onSuccess { mutableState.update { it.copy(sensorEdit=edit.copy(requested=value),editConfirm=true,editError=null) } }
             .onFailure { error->mutableState.update { it.copy(editError=error.message) } }
     }
-    fun confirmSensorEdit() {
+    @Synchronized fun confirmSensorEdit() {
         val s=state.value;val edit=s.sensorEdit ?: return
         if(s.editBusy || !s.editConfirm)return
         mutableState.update { it.copy(editBusy=true,editError=null) }

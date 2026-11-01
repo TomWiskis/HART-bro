@@ -53,6 +53,12 @@ class QuickView053Test {
             ui.onNodeWithTag("primaryReading").assertDoesNotExist();ui.onNodeWithTag("loopReading").assertDoesNotExist()
             ui.onNodeWithTag("quickSensorNumbers",useUnmergedTree=true).assertTextContains("6277759   01.02.2026")
             assertTrue(c.state.value.monitor.identificationResponding)
+            ui.onNodeWithTag("quickRangeEdit").performClick();waitFor{c.state.value.range.phase==RangePhase.FORM}
+            assertFalse(c.state.value.diagnosticVisible)
+            ui.onNodeWithTag("rangeUnits").performClick();ui.onNodeWithText("psi",useUnmergedTree=true).performClick()
+            ui.onNodeWithTag("rangeSet").performScrollTo().assertIsNotEnabled();assertEquals(0,app.rangeWrites.get())
+            c.closeRange();waitFor{!c.state.value.rangeVisible && !c.state.value.rangeOwned && c.state.value.monitor.phase==MonitorPhase.READY}
+            ui.waitForIdle()
             ui.onNodeWithTag("quickSensorInfo").performClick();waitFor{!c.state.value.diagnosticLoading && c.state.value.sensorDiagnostics!=null}
             edit("editLongTag","NEW-053")
             assertEquals(1,app.sensorWrites.get());assertTrue(c.state.value.sensorRecords.first().succeeded)

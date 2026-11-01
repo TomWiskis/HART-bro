@@ -37,6 +37,25 @@ private class ReadFixture(private val responses: Map<Int, ByteArray>, private va
 }
 
 class MeasurementsTest {
+    @Test fun diagnosticCacheSurvivesSameDeviceReconnectButReplacementNegotiatesAndUsesNewAddress() = runTest {
+        val a=ReadFixture(mapOf(1 to hex("0C 3F 80 00 00"),3 to hex("40 80 00 00 0C 3F 80 00 00")))
+        val reader=MeasurementReader(HartClient(a),metran02)
+        reader.discover();reader.sample() // A rejected command 9, so its fallback is now cached.
+        val same=ReadFixture(mapOf(3 to hex("40 80 00 00 0C 40 00 00 00")))
+        val rebound=reader.forDevice(HartClient(same),metran02)
+        assertEquals(2f,rebound.sample().values.single().value,0f)
+        assertEquals(listOf(3),same.commands)
+        val records=(246..249).map{byteArrayOf(it.toByte(),0x41,12,0x40,0x40,0,0,0xC0.toByte())}.fold(byteArrayOf()){x,y->x+y}
+        val b=ReadFixture(mapOf(1 to hex("0C 40 40 00 00"),3 to hex("40 80 00 00 0C 40 40 00 00"),9 to (byteArrayOf(0)+records+ByteArray(4))))
+        val replacement=rebound.forDevice(HartClient(b),metran02.copy(deviceId=0x123456))
+        assertFalse(replacement.discovered);replacement.discover()
+        val batch=replacement.sample();assertEquals(3f,batch.values.first().value,0f);assertEquals(9,batch.values.first().command)
+        assertTrue(b.commands.containsAll(listOf(1,8,48,50,9)))
+        b.requests.forEach { request ->
+            val frame=(HartDecoder().accept(request).single() as DecodeEvent.Frame).value
+            assertArrayEquals(hex("99 72 12 34 56"),frame.address)
+        }
+    }
     @Test fun command9RefreshesActualLoopCurrentInsteadOfReusingInitialSnapshot() = runTest {
         val records=(246..249).map{byteArrayOf(it.toByte(),0x41,12,0x3f,0x80.toByte(),0,0,0xc0.toByte())}.fold(byteArrayOf()){a,b->a+b}
         val data=mutableMapOf(1 to hex("0C 3F 80 00 00"),3 to hex("40 80 00 00 0C 3F 80 00 00"),9 to (byteArrayOf(0)+records+ByteArray(4)))

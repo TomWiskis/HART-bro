@@ -82,6 +82,12 @@ class MeasurementReader(private var client: HartClient, private val identity: De
     var discovered: Boolean = false
         private set
     fun rebind(newClient: HartClient) { client = newClient }
+    /** A diagnostic cache can survive reconnecting this device, but never a replacement. */
+    fun forDevice(newClient: HartClient, found: DeviceIdentity): MeasurementReader =
+        if (passportKey(found) == passportKey(identity) && found.hartRevision == identity.hartRevision &&
+            found.deviceRevision == identity.deviceRevision && found.softwareRevision == identity.softwareRevision) {
+            rebind(newClient); this
+        } else MeasurementReader(newClient, found, report)
     suspend fun discover(): MeasurementBatch {
         val pv = MeasurementDecoder.primary(client.read(identity.address, ReadCommand.PRIMARY_VARIABLE))
         if (identity.hartRevision >= 6) optional(ReadCommand.CLASSIFICATIONS) { classifications = MeasurementDecoder.fourCodes(it) }
