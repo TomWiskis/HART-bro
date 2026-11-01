@@ -69,6 +69,10 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
                     }
                 }
             }
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick={val value=if(lower.text.startsWith('-'))lower.text.drop(1) else "-${lower.text}";lower=TextFieldValue(value,TextRange(value.length))}){Text("± Низ")}
+                TextButton(onClick={val value=if(upper.text.startsWith('-'))upper.text.drop(1) else "-${upper.text}";upper=TextFieldValue(value,TextRange(value.length))}){Text("± Верх")}
+            }
             if(snapshot.writableUnits.size==1)Text("Поддержка записи других единиц этим прибором не подтверждена. Сохраняется текущая единица.",style=MaterialTheme.typography.bodySmall)
             validation.errors.forEach{Text(it,color=MaterialTheme.colorScheme.error)}
             validation.warnings.forEach{Text(it,style=MaterialTheme.typography.bodySmall)}
