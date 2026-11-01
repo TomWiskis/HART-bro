@@ -14,6 +14,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
@@ -54,7 +55,7 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         Text("Общий график", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        Text(configuredRange ?: loaded?.view?.info?.configuration?.range?.label ?: "Диапазон недоступен", style = MaterialTheme.typography.labelSmall)
+        Text(configuredRange ?: loaded?.view?.info?.configuration?.range?.label ?: "Диапазон недоступен", style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
     }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     val model = loaded
@@ -152,7 +153,7 @@ internal fun MonitoringChart(history: SessionHistory, archiveId: String?, revisi
     Slider(value = if (end > start) ((hi - start).toDouble() / (end - start)).toFloat().coerceIn(0f, 1f) else 1f,
         modifier = Modifier.testTag("chartSeek"), enabled = end > start,
         onValueChange = { changeViewport(viewport.seek(start, end, it, periodMillis.coerceAtLeast(1000))) })
-    Text("${ChartAxes.timeLabel(lo, widthMillis)} — ${ChartAxes.timeLabel(hi, widthMillis)} · ${viewport.spanMillis / 1000} с", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chartWindow"))
+    Text("${ChartAxes.timeLabel(lo, widthMillis)} — ${ChartAxes.timeLabel(hi, widthMillis)} · ${if(viewport.spanMillis==Long.MAX_VALUE) "Вся сессия" else "${viewport.spanMillis / 1000} с"}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chartWindow"))
     TextButton(onClick = { eventsExpanded = !eventsExpanded }) { Text(if (eventsExpanded) "Скрыть события" else "События сессии") }
     if (eventsExpanded) data.events.forEach { (at, text) -> Text("${timeLabel(at)} · $text", style = MaterialTheme.typography.bodySmall) }
 }
