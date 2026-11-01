@@ -1,0 +1,87 @@
+{
+  "version": "0.5.2",
+  "versionCode": 10,
+  "sourceCommit": "224765a4cbbd8b460a447423bf73481959df1719",
+  "jvm": {
+    "tests": 204,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "apk": {
+    "bytes": 30330070,
+    "sha256": "54bf52d6ebca24b34244a9ce9619d054daf28ede8ff222d6a6adf586808010ff",
+    "certificateSha256": "263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09",
+    "sameCertificateAs051": true,
+    "testSimulatorClassesAbsent": true
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 1,
+    "warning": "NewerVersionAvailable (existing)"
+  },
+  "export": {
+    "reader": "openpyxl",
+    "sheets": [
+      "Проверка"
+    ],
+    "sourceValues": 269,
+    "timeRows": 68,
+    "exportedNumericValues": 269,
+    "freezePanes": "A12",
+    "tables": {
+      "Devices": "A5:F6",
+      "Measurements": "A11:AI79"
+    },
+    "allValuesRoundTripAsFloat32": true,
+    "numericDates": true,
+    "allQualityAndSourceFieldsMatch": true,
+    "missingVariablesBlank": true,
+    "factoryFactsNotInvented": true,
+    "warnings": []
+  },
+  "walk": {
+    "file": "TEST-ONLY-walk-100-devices.xlsx",
+    "synthetic_data_only": true,
+    "sheets": [
+      "Приборы"
+    ],
+    "columns": 5,
+    "devices": 100,
+    "compared_cells": 505,
+    "freeze": "A2",
+    "filter": "A1:E101",
+    "serial_leading_zeros_preserved": true,
+    "date_precision_preserved": true
+  },
+  "units": {
+    "productionWritableAlternativesEnabled": false,
+    "reason": "No documented device-specific writable unit list is configured. Current reported unit only.",
+    "conversionTests": [
+      "kPa-MPa",
+      "C-F",
+      "C-K"
+    ],
+    "capabilityGatedSingle35VerifiedOnSimulator": true
+  },
+  "android": {
+    "tests": 25,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "preliminaryInterfaceTests": 3,
+    "apiLevel": 36,
+    "physicalBluetooth": false,
+    "allExpectedMethodsPresent": true,
+    "jobId": 124810053072,
+    "resultsArtifactId": 13078879313,
+    "artifactSha256": "85fab906a5fc825257bb57dd1c25a91ecd42cc126740f3cdc0973c1f57840521"
+  },
+  "ci": {
+    "runId": 41293706552,
+    "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41293706552",
+    "headSha": "224765a4cbbd8b460a447423bf73481959df1719",
+    "conclusion": "success",
+    "buildJobId": 124810052899
+  }
+}
