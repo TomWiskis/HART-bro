@@ -165,11 +165,12 @@ class MonitoringEngine(
         job!!.start()
     }
     suspend fun retryIdentification() {
-        synchronized(controls) {
+        val failedJob = synchronized(controls) {
             if (state.value.phase != MonitorPhase.ERROR || state.value.startedAt != null || configuring) return
+            job
         }
         // ERROR can be observed just before the failing coroutine finishes its finally block.
-        job?.join()
+        failedJob?.join()
         synchronized(controls) {
             if (state.value.phase == MonitorPhase.ERROR && state.value.startedAt == null && !configuring) start(false)
         }

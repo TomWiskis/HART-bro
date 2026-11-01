@@ -58,7 +58,8 @@ class MonitoringEngineTest {
         val engine = MonitoringEngine(backgroundScope, { if (++connects == 1) old else TestConnection(onIdentify = { delay(50); metran02 }) }, MemorySink())
         engine.start(false); runCurrent(); assertTrue(engine.state.value.bluetoothConnected)
         old.close(); assertFalse(engine.state.value.bluetoothConnected)
-        engine.retryIdentification(); engine.retryIdentification(); runCurrent()
+        val retries = List(3) { async { engine.retryIdentification() } }
+        runCurrent(); retries.awaitAll()
         advanceTimeBy(51); runCurrent()
         assertEquals(2, connects); assertEquals(MonitorPhase.READY, engine.state.value.phase)
         assertTrue(engine.state.value.bluetoothConnected); engine.stop()
