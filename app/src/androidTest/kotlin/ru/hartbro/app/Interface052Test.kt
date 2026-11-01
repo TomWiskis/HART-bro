@@ -89,7 +89,7 @@ class Interface052Test {
             val chosen=c.state.value.chartViewport;s.recreate();assertEquals(chosen,c.state.value.chartViewport)
             ui.onNodeWithTag("chartSeek").performScrollTo().performSemanticsAction(SemanticsActions.SetProgress){it(1f)}
             waitFor{c.state.value.chartViewport.following};assertEquals(30_000L,c.state.value.chartViewport.spanMillis)
-            val bounds=c.history.bounds()!!;c.pause(true);SystemClock.sleep(1200);assertEquals(bounds,c.history.bounds())
+            c.pause(true);waitFor{c.state.value.monitor.phase==MonitorPhase.PAUSED};val bounds=c.history.bounds()!!;SystemClock.sleep(1200);assertEquals(bounds,c.history.bounds())
             c.pause(false);waitFor{c.state.value.monitor.latest!=null};assertEquals(30_000L,c.state.value.chartViewport.spanMillis)
         }
     }

@@ -2,6 +2,7 @@ package ru.hartbro.core
 
 import java.nio.file.Files
 import java.time.Instant
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -20,6 +21,15 @@ class Presentation052Test {
         assertFalse(RangeRules.validate(snapshot,"0","0.016",237).allowed)
         assertTrue(RangeRules.validate(snapshot.copy(writableUnits=setOf(12,237)),"0","0.016",237).allowed)
     }
+    @Test fun documentedCapabilityCombinesUnitsAndBoundsInOneVerifiedWrite() = runTest {
+        val wire=RangeWire()
+        val operations=RangeOperations(HartClient(wire,timeoutMillis=50,readAttempts=3)) { _, _ -> setOf(12,237) }
+        val before=operations.prepare();val requested=convertRange(before.range,237)
+        val attempt=operations.apply(before,requested,{},{})
+        assertEquals(RangeOutcome.SUCCEEDED,rangeOutcome(requested,before.range,attempt))
+        assertEquals(1,wire.writes);assertEquals(237,attempt.verification!!.range.unitCode)
+        assertEquals(0.016f,attempt.verification!!.range.upper,0.00000001f)
+    }
     @Test fun measurementAgeAndSensorIdentityAreNotInferredFromBluetooth() {
         val now=Instant.ofEpochMilli(100_000)
         assertTrue(measurementFresh(now.minusSeconds(1),now,2000))
@@ -35,7 +45,7 @@ class Presentation052Test {
             val a=RangeRecord(identity=metran02,tag=null,original=ConfiguredRange(0f,16f,12),requested=ConfiguredRange(2f,20f,12),stage=WriteStage.FINISHED,outcome=RangeOutcome.SUCCEEDED)
             val b=a.copy(id=java.util.UUID.randomUUID().toString(),stage=WriteStage.SENT,outcome=RangeOutcome.PENDING)
             journal.save(a);journal.save(b)
-            assertEquals(3,rangeChanges(a).size)
+            assertEquals(2,rangeChanges(a).size)
             journal.delete(a.id);assertEquals(b.id,journal.load(b.id).id)
             assertThrows(IllegalStateException::class.java){journal.deleteAll()}
             journal.recoverInterrupted();journal.deleteAll();assertTrue(journal.list().isEmpty())

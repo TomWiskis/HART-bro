@@ -255,8 +255,9 @@ class SessionController(private val app: Application, private val connectionFact
             } catch(e: CancellationException) { throw e }
             catch(e: Exception) { mutableState.update { it.copy(diagnosticError = e.message ?: "Чтение диагностики не выполнено") } }
             finally {
-                if(acquired) engine?.releaseConfiguration(conn, verification, !different && conn?.isOpen == true,
-                    if(different) "Обнаружен другой прибор" else "Диагностическое чтение завершено", different)
+                if(acquired) runCatching { engine?.releaseConfiguration(conn, verification, !different && conn?.isOpen == true,
+                    if(different) "Обнаружен другой прибор" else "Диагностическое чтение завершено", different) }
+                    .onFailure { error -> mutableState.update { it.copy(diagnosticError="Ошибка завершения чтения: ${error.message}") } }
                 mutableState.update { it.copy(diagnosticLoading = false) }
             }
         } }
@@ -354,7 +355,7 @@ class SessionController(private val app: Application, private val connectionFact
             })
             rangeEngine=worker
             mutableState.update{it.copy(rangeOwned=true,rangeVisible=true,range=worker.state.value,notice=null)}
-            rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r,rangeTransportOpen=worker.connection?.isOpen==true)}}}
+            rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r,rangeTransportOpen=r.bluetoothConnected)}}}
             if(record==null) worker.open() else worker.verifyOnly(record)
         } catch(e:Exception) {
             if(rangeLeaseActive)releaseRangeLease(null,rangeEngine?.connection,false,"Настройка не открыта: ${e.message}")

@@ -16,8 +16,8 @@ fun primaryParameter(unit: Int?): String = when(unit) {
 fun rangeChanges(record: RangeRecord): List<String> = buildList {
     val a = record.original; val b = record.requested
     fun number(v: Float) = v.toString().removeSuffix(".0").replace('.', ',')
-    if (a.lower != b.lower || a.unitCode != b.unitCode) add("Нижний предел: ${number(a.lower)} → ${number(b.lower)}")
-    if (a.upper != b.upper || a.unitCode != b.unitCode) add("Верхний предел: ${number(a.upper)} → ${number(b.upper)}")
+    if (a.lower != b.lower || a.unitCode != b.unitCode) add("Нижний предел: ${number(a.lower)} ${HartUnits.find(a.unitCode)?.symbol ?: a.unitCode} → ${number(b.lower)} ${HartUnits.find(b.unitCode)?.symbol ?: b.unitCode}")
+    if (a.upper != b.upper || a.unitCode != b.unitCode) add("Верхний предел: ${number(a.upper)} ${HartUnits.find(a.unitCode)?.symbol ?: a.unitCode} → ${number(b.upper)} ${HartUnits.find(b.unitCode)?.symbol ?: b.unitCode}")
     if (a.unitCode != b.unitCode) add("Единица: ${HartUnits.find(a.unitCode)?.symbol ?: a.unitCode} → ${HartUnits.find(b.unitCode)?.symbol ?: b.unitCode}")
-    else add("Единица: ${HartUnits.find(b.unitCode)?.symbol ?: b.unitCode}")
+
 }
