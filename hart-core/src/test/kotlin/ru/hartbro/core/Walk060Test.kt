@@ -28,8 +28,8 @@ private class WalkWire060(val identity:DeviceIdentity,val waitMs:Long=150):HartT
 }
 class Walk060Test {
     @Test fun basicWalkRouteHasOnlyUsedFieldsAndOneBoundedRetryForMissing13And15()=runTest {
-        for(missing in listOf(emptySet(),setOf(13),setOf(15))) {
-            val wire=WalkWire060(identity040(revision=5)).apply{this.missing=missing}
+        for(waitMs in listOf(150L,1400L)) for(missing in listOf(emptySet(),setOf(13),setOf(15))) {
+            val wire=WalkWire060(identity040(revision=5),waitMs).apply{this.missing=missing}
             val metrics=mutableListOf<HartTransactionMetric>()
             val client=HartClient(wire,timeoutMillis=1500,readAttempts=1,observed={metrics+=it},clockMillis={testScheduler.currentTime})
             val reading=PassportReader(client).read(client.identify().first)

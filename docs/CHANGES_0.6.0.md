@@ -13,3 +13,9 @@
 Application ID и форматы существующих сессий/ведомостей/журналов не меняются. Данные не очищаются. Ограничения нуля, записи Device ID, неподтверждённых единиц и трактовки HART Date из 0.5.3 сохраняются. Визуального редизайна нет.
 
 Аппаратная совместимость ЭнИ-406 и UART-профиль пользовательского экземпляра пока не подтверждены: [источники, настройки и полевой план](USB_0.6.0.md). [Исходное ТЗ](SPEC_0.6.0.md).
+
+## Компоненты
+
+Новый модуль `transport-usb`: `UsbHostController` (UsbManager, inventory/permission/open/reattach), `EniUsbDrivers` (upstream FTDI/WCH ID-таблицы), `UsbPermissionGate` (один запрос на выбранное подключение), `UsbHartTransport`/`SerialPortIo` (байтовый обмен, отмена и ресурсы), `UsbPortSettings` и `UsbReadQualification`. Библиотека — отдельный локальный модуль `usb-serial`.
+
+Переработаны общий `HartTransport` и `HartClient` (статус, отключение, метрики и подробность RX), прежний `BluetoothSppTransport` (реализация общих status/disconnect), `SessionController`, страница USB и значок транспорта, состояния `MonitoringEngine`/`WalkEngine`/`RangeEngine`, `PassportReader`, `WalkCatalog` и `WalkXlsx`. Android-сервис и приложение сохраняют одного владельца соединения при передаче между режимами. Добавлены программные USB/обходные тесты, Android USB UI/recreate/recovery и одинаковый benchmark для исходной и новой версии.

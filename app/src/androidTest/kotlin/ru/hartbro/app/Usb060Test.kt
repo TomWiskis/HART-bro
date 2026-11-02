@@ -54,7 +54,7 @@ class Usb060Test {
             app.closeRfcomm!!.invoke();waitFor{!c.state.value.monitor.transportConnected}
             waitFor{c.state.value.monitor.phase==MonitorPhase.READY && app.connections.get()==count+1}
             s.recreate();assertEquals(count+1,app.connections.get());assertNull(c.state.value.monitor.startedAt)
-            ui.onNodeWithTag("bluetoothBadge").assertContentDescriptionContains("USB:")
+            ui.onNodeWithTag("bluetoothBadge").assertContentDescriptionContains("USB: USB-TEST, подключён")
         }
     }
 }
