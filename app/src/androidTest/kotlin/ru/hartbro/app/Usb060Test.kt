@@ -35,11 +35,18 @@ class Usb060Test {
             assertFalse(c.state.value.usbPermissionPending)
         }
     }
-    private fun connect(s:ActivityScenario<MainActivity>){s.onActivity{app.startForegroundService(Intent(app,MonitoringService::class.java).putExtra("address","usb:test-fixture:0").putExtra("name","USB-TEST"))}}
+    private fun connect(s:ActivityScenario<MainActivity>,phase:MonitorPhase):Int {
+        val before=app.connections.get()
+        s.onActivity{app.startForegroundService(Intent(app,MonitoringService::class.java).putExtra("address","usb:test-fixture:0").putExtra("name","USB-TEST"))}
+        // ERROR can remain from the previous stopped Bluetooth owner until this async service delivery starts.
+        waitFor{app.connections.get()==before+1 && c.state.value.let{
+            it.active && it.communicator?.kind==TransportKind.USB && it.monitor.phase==phase && it.monitor.transportConnected
+        }}
+        return before
+    }
     @Test fun usbHartTimeoutKeepsTransportOpenAndRetryAfterActivityRecreationReusesConnection(){
         ActivityScenario.launch(MainActivity::class.java).use{s->
-            app.failIdentity=true;val count=app.connections.get();connect(s)
-            waitFor{c.state.value.monitor.phase==MonitorPhase.ERROR}
+            app.failIdentity=true;val count=connect(s,MonitorPhase.ERROR)
             assertEquals(TransportKind.USB,c.state.value.communicator?.kind);assertTrue(c.state.value.monitor.transportConnected)
             s.recreate();app.failIdentity=false
             ui.onNodeWithTag("retryIdentification").performScrollTo().performClick()
@@ -50,7 +57,7 @@ class Usb060Test {
     }
     @Test fun usbDetachImmediatelyClearsIndicatorAndReattachesWithoutStartingSession(){
         ActivityScenario.launch(MainActivity::class.java).use{s->
-            connect(s);waitFor{c.state.value.monitor.phase==MonitorPhase.READY};val count=app.connections.get()
+            val count=connect(s,MonitorPhase.READY)+1
             app.closeRfcomm!!.invoke();waitFor{!c.state.value.monitor.transportConnected}
             waitFor{c.state.value.monitor.phase==MonitorPhase.READY && app.connections.get()==count+1}
             s.recreate();assertEquals(count+1,app.connections.get());assertNull(c.state.value.monitor.startedAt)
