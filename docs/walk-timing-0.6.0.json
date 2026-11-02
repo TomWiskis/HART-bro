@@ -1,0 +1,18 @@
+{
+  "baseline_source": "38ea403",
+  "benchmark": "WalkTiming060Test",
+  "clock": "coroutine virtual milliseconds, not physical hardware",
+  "reply_delay_ms": 150,
+  "timeout_ms": 1500,
+  "before": [
+    "WALK_BENCH config silent14and16=false discoveryMs=150 configurationMs=600 totalMs=750 commands=[0, 20, 15, 14, 16] timeouts=0",
+    "WALK_BENCH config silent14and16=true discoveryMs=150 configurationMs=3500 totalMs=3650 commands=[0, 20, 15, 14, 16] timeouts=2",
+    "WALK_BENCH noResponse txOffsetsMs=[0, 2700, 5400, 8100] cycleMs=[2700, 2700, 2700] rows=0"
+  ],
+  "after": [
+    "WALK_BENCH config silent14and16=false discoveryMs=150 configurationMs=450 totalMs=600 commands=[0, 13, 15, 20] timeouts=0",
+    "WALK_BENCH config silent14and16=true discoveryMs=150 configurationMs=450 totalMs=600 commands=[0, 13, 15, 20] timeouts=0",
+    "WALK_BENCH noResponse txOffsetsMs=[0, 2100, 4200, 6300, 8400] cycleMs=[2100, 2100, 2100, 2100] rows=0"
+  ],
+  "identical_benchmark_sha256": "1cecb1a9097a4f79fd1dd7126e079194569efd6d8ca0ae6775325c301ec46dac"
+}

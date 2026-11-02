@@ -40,10 +40,10 @@ class Presentation052Test {
     }
     @Test fun failedExpectedReadTurnsHartIndicatorOffEvenWithHealthyBluetoothAndRecentSuccess() {
         val now=Instant.ofEpochMilli(100_000)
-        val state=MonitorState(phase=MonitorPhase.MONITORING,identity=metran02,latest=sample02(100_000),lastHartSuccess=now,bluetoothConnected=true)
+        val state=MonitorState(phase=MonitorPhase.MONITORING,identity=metran02,latest=sample02(100_000),lastHartSuccess=now,transportConnected=true)
         assertTrue(state.hartExchangeCurrent(now))
         assertFalse(state.copy(latest=null).hartExchangeCurrent(now.plusMillis(1)))
-        assertFalse(state.copy(bluetoothConnected=false).hartExchangeCurrent(now))
+        assertFalse(state.copy(transportConnected=false).hartExchangeCurrent(now))
         assertFalse(state.copy(phase=MonitorPhase.RECOVERING).hartExchangeCurrent(now))
         assertFalse(state.hartExchangeCurrent(now.plusSeconds(20)))
         assertTrue(state.copy(phase=MonitorPhase.READY,latest=null,identificationResponding=true).hartExchangeCurrent(now))

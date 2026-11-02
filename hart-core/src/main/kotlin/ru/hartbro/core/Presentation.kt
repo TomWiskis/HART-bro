@@ -23,6 +23,6 @@ fun rangeChanges(record: RangeRecord): List<String> = buildList {
 }
 
 /** An expected measurement that failed must turn the HART indicator off immediately. */
-fun MonitorState.hartExchangeCurrent(now: Instant): Boolean = bluetoothConnected && identity != null &&
+fun MonitorState.hartExchangeCurrent(now: Instant): Boolean = transportConnected && identity != null &&
     (phase == MonitorPhase.READY && identificationResponding || phase == MonitorPhase.MONITORING && latest != null) &&
     measurementFresh(lastHartSuccess, now, periodMillis)

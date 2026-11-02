@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 enum class RangePhase { CLOSED, READING, FORM, CONFIRM, PRECHECK, WRITING, VERIFYING, RECOVERING, RESULT }
-data class RangeState(val bluetoothConnected:Boolean=false, val phase:RangePhase=RangePhase.CLOSED,val snapshot:RangeSnapshot?=null,val token:String=UUID.randomUUID().toString(),
+data class RangeState(val transportConnected:Boolean=false, val phase:RangePhase=RangePhase.CLOSED,val snapshot:RangeSnapshot?=null,val token:String=UUID.randomUUID().toString(),
                       val requested:ConfiguredRange?=null,val validation:RangeValidation?=null,val record:RangeRecord?=null,
                       val verification:RangeVerification?=null,val otherDevice:DeviceIdentity?=null,val message:String="",val secondsLeft:Int?=null) {
     val busy get()=phase in setOf(RangePhase.READING,RangePhase.PRECHECK,RangePhase.WRITING,RangePhase.VERIFYING,RangePhase.RECOVERING)
@@ -115,8 +115,8 @@ class RangeEngine(private val scope:CoroutineScope,initial:MonitorConnection?,pr
     }
     private suspend fun ensureConnection(){
         if(connection?.isOpen!=true){connection?.close();connection=connect()}
-        connection?.onDisconnect { mutable.update { it.copy(bluetoothConnected=false) } }
-        mutable.update { it.copy(bluetoothConnected=connection?.isOpen==true) }
+        connection?.onDisconnect { mutable.update { it.copy(transportConnected=false) } }
+        mutable.update { it.copy(transportConnected=connection?.isOpen==true) }
     }
     private suspend fun verifyWithRecovery(identity:DeviceIdentity):RangeVerification {
         val deadline=clock()+60_000

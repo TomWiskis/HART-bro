@@ -7,8 +7,8 @@ android {
         applicationId = "ru.hartbro.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.5.3"
+        versionCode = 12
+        versionName = "0.6.0"
         testInstrumentationRunner = "ru.hartbro.app.FieldRegressionRunner"
     }
     signingConfigs.getByName("debug") {
@@ -23,6 +23,7 @@ kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarg
 dependencies {
     implementation(project(":hart-core"))
     implementation(project(":transport-bluetooth"))
+    implementation(project(":transport-usb"))
     implementation(platform("androidx.compose:compose-bom:2025.10.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")

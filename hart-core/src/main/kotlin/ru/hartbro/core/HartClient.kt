@@ -9,6 +9,8 @@ import kotlinx.coroutines.sync.withLock
 
 /** Transport owns connection establishment and cancellation of blocking I/O. */
 interface HartTransport : AutoCloseable {
+    val isOpen: Boolean get() = true
+    fun onDisconnect(listener: () -> Unit) {}
     suspend fun write(bytes: ByteArray)
     suspend fun receive(): ByteArray
     fun discardBufferedInput(): List<ByteArray>
@@ -21,6 +23,8 @@ data class DiagnosticEntry(val time: Instant, val kind: String, val message: Str
 class HartTimeoutException(message: String, val malformedFrames: Boolean = false,val receivedRaw:ByteArray=byteArrayOf()) : Exception(message)
 class HartWriteIOException(cause:java.io.IOException,val receivedRaw:ByteArray):java.io.IOException(cause.message,cause)
 
+data class HartTransactionMetric(val command: Int, val attempt: Int, val millis: Long, val outcome: String)
+
 data class HartExchange(val data: ByteArray, val responseCode: Int, val deviceStatus: Int, val receivedAt: Instant,
                         val txFrame: ByteArray, val rxFrame: ByteArray)
 
@@ -30,6 +34,10 @@ class HartClient(
     private val diagnostic: (DiagnosticEntry) -> Unit = {},
     private val timeoutMillis: Long = 2500,
     private val readAttempts: Int = 2,
+    private val detailed: () -> Boolean = { true },
+    private val observed: (HartTransactionMetric) -> Unit = {},
+    private val beforeWrite: () -> Unit = {},
+    private val clockMillis: () -> Long = { System.nanoTime()/1_000_000 },
 ) {
     init { require(timeoutMillis > 0); require(readAttempts in 1..3) }
     private val mutex = Mutex()
@@ -90,17 +98,18 @@ class HartClient(
             }
             transport.discardBufferedInput().forEach { log("STALE", "Накопленные данные до отправки запроса; не считаются его ответом", it) }
             val decoder = HartDecoder()
-            val started = System.nanoTime()
+            val started = clockMillis()
             log("TX-FRAME", "Полный запрос: команда $command, попытка $attempt/$attempts", request)
             try {
                 return withTimeout(timeoutMillis) {
+                    if(retainCodes)beforeWrite()
                     beforeSend(request.copyOf())
                     transport.write(request)
                     var result: HartExchange? = null
                     while (result == null) {
                         val bytes = transport.receive()
                         if(retainCodes)receivedRaw=(receivedRaw+bytes).takeLast(4096).toByteArray()
-                        log("RX-CHUNK", "Фрагмент Bluetooth: ${bytes.size} байт", bytes)
+                        if(detailed())log("RX-CHUNK", "Фрагмент транспорта: ${bytes.size} байт", bytes)
                         for (event in decoder.accept(bytes)) {
                             when (event) {
                                 is DecodeEvent.Rejected -> { malformedFrames = true; log("FRAME", event.reason, event.raw) }
@@ -116,7 +125,8 @@ class HartClient(
                                     val code = frame.payload[0].u8()
                                     val status = frame.payload[1].u8()
                                     log("HART", "Команда $command: код 0x%02X (%s); статус 0x%02X (%s); %.0f мс"
-                                        .format(code, HartStatus.responseDescription(code), status, HartStatus.deviceDescription(status), (System.nanoTime() - started) / 1e6))
+                                        .format(code, HartStatus.responseDescription(code), status, HartStatus.deviceDescription(status), (clockMillis() - started).toDouble()))
+                                    observed(HartTransactionMetric(command,attempt,clockMillis()-started,if(code==0)"OK" else "RESPONSE_$code"))
                                     if (code != 0 && !retainCodes) throw HartResponseException(code, status)
                                     result = HartExchange(frame.payload.copyOfRange(2, frame.payload.size), code, status, Instant.now(),request.copyOf(),frame.raw.copyOf())
                                     break
@@ -129,12 +139,13 @@ class HartClient(
             } catch (timeout: TimeoutCancellationException) {
                 // Do not swallow cancellation of the caller's enclosing timeout.
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                observed(HartTransactionMetric(command,attempt,clockMillis()-started,"TIMEOUT"))
                 readNeedsDrain = true
                 if (decoder.hasPartialFrame) { malformedFrames = true; log("FRAME", "Неполный кадр к окончанию таймаута", decoder.reset()) }
                 log("TIMEOUT", "Нет корректного ответа на команду $command за $timeoutMillis мс")
-            } catch(e:java.io.IOException) { if(retainCodes)throw HartWriteIOException(e,receivedRaw) else throw e }
+            } catch(e:java.io.IOException) { observed(HartTransactionMetric(command,attempt,clockMillis()-started,"IO_ERROR"));if(retainCodes)throw HartWriteIOException(e,receivedRaw) else throw e }
         }
-        throw HartTimeoutException("HART-ответ отсутствует: команда $command. Проверьте питание петли, нагрузку, адрес 0 и совместимость VIATOR.", malformedFrames,receivedRaw)
+        throw HartTimeoutException("HART-ответ отсутствует: команда $command. Проверьте питание петли, нагрузку, адрес 0 и совместимость коммуникатора.", malformedFrames,receivedRaw)
     }
 
     private fun log(kind: String, message: String, bytes: ByteArray = byteArrayOf()) {

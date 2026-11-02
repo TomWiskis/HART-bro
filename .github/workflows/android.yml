@@ -14,13 +14,14 @@ jobs:
       - name: Install Android SDK
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Protocol tests, debug APK and Android lint
-        run: ./gradlew :hart-core:test :app:assembleDebug :app:lintDebug --no-daemon
+        run: ./gradlew :hart-core:test :transport-usb:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: hart-bro-debug
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             hart-core/build/test-results/test/
+            transport-usb/build/test-results/testDebugUnitTest/
             app/build/reports/lint-results-debug.*
 
   android-lifecycle-regression:
@@ -100,7 +101,8 @@ jobs:
           expected |= {'retryIdentificationReconnectsClosedRfcommAfterActivityRecreation'}
           expected |= {'compactMonitorOpensFreshDiagnosticsAndRangeReplacesFirstInputOnNarrowScreen', 'chartSeekReenablesFollowAndRecreationRetainsChosenScale', 'compactHistoryDeletesOnlyLocalRecordsAfterConfirmation'}
           expected |= {'quickCardHasNoMeasurementsAndMetadataWritesSurviveRecreationWithVerifiedJournal', 'quickReplacementAndRfcommRecoveryKeepNoSessionUntilExplicitButton', 'documentedPressureZeroNeedsConfirmationWritesOnceAndChecksActualPv'}
-          passed = counts['tests'] >= 28 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
+          expected |= {'usbInventoryWithoutHardwareHasNoFictitiousPortAndSelectionSurvivesRecreation', 'usbHartTimeoutKeepsTransportOpenAndRetryAfterActivityRecreationReusesConnection', 'usbDetachImmediatelyClearsIndicatorAndReattachesWithoutStartingSession'}
+          passed = counts['tests'] >= 31 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
           annotation('notice' if passed else 'error', str(counts))
           if not counts['tests']:
               try:

@@ -19,7 +19,7 @@ object WalkXlsx {
                     writer.write("</row>")
                 }
                 row(1, headers, 3)
-                book.rows.forEachIndexed { i, device -> row(i + 2, PassportField.entries.map { device.text(it).orEmpty() }, 4) }
+                book.rows.forEachIndexed { i, device -> row(i + 2, PassportField.entries.map { if(it==PassportField.SERIAL) (device.observed.identity.deviceId.toLong() and 0xFFFFFF).toString() else device.text(it).orEmpty() }, 4) }
                 writer.write("""</sheetData><pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><tableParts count="1"><tablePart r:id="rId1"/></tableParts></worksheet>""")
             }
             workbook.tables(listOf(Triple("WalkDevices", "A1:E$end", headers)))

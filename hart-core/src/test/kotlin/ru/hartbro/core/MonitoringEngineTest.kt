@@ -35,7 +35,7 @@ class MonitoringEngineTest {
         engine.start(false); runCurrent()
         repeat(2) {
             assertEquals(MonitorPhase.ERROR, engine.state.value.phase)
-            assertTrue(engine.state.value.bluetoothConnected); assertNull(engine.state.value.identity)
+            assertTrue(engine.state.value.transportConnected); assertNull(engine.state.value.identity)
             assertEquals(0, conn.closes); assertEquals(0, sink.begins)
             engine.retryIdentification(); runCurrent()
         }
@@ -56,19 +56,19 @@ class MonitoringEngineTest {
             override fun close() { opened = false; disconnect?.invoke() }
         }
         val engine = MonitoringEngine(backgroundScope, { if (++connects == 1) old else TestConnection(onIdentify = { delay(50); metran02 }) }, MemorySink())
-        engine.start(false); runCurrent(); assertTrue(engine.state.value.bluetoothConnected)
-        old.close(); assertFalse(engine.state.value.bluetoothConnected)
+        engine.start(false); runCurrent(); assertTrue(engine.state.value.transportConnected)
+        old.close(); assertFalse(engine.state.value.transportConnected)
         val retries = List(3) { async { engine.retryIdentification() } }
         runCurrent(); retries.awaitAll()
         advanceTimeBy(51); runCurrent()
         assertEquals(2, connects); assertEquals(MonitorPhase.READY, engine.state.value.phase)
-        assertTrue(engine.state.value.bluetoothConnected); engine.stop()
+        assertTrue(engine.state.value.transportConnected); engine.stop()
     }
     @Test fun identificationIoFailureClosesTransportButAllowsNewAttempt() = runTest {
         val old = TestConnection(onIdentify = { throw IOException("EOF") }); var connects = 0
         val engine = MonitoringEngine(backgroundScope, { if (++connects == 1) old else TestConnection() }, MemorySink())
         engine.start(false); runCurrent()
-        assertFalse(engine.state.value.bluetoothConnected); assertEquals(1, old.closes)
+        assertFalse(engine.state.value.transportConnected); assertEquals(1, old.closes)
         engine.retryIdentification(); runCurrent()
         assertEquals(MonitorPhase.READY, engine.state.value.phase); assertEquals(2, connects); engine.stop()
     }
@@ -103,7 +103,7 @@ class MonitoringEngineTest {
         var reads=0; var connects=0
         val conn = TestConnection(onSample={reads++; if(reads==1) throw HartTimeoutException("no response"); sample02(testScheduler.currentTime)})
         val engine = MonitoringEngine(backgroundScope,{connects++;conn},MemorySink(),monotonicMillis={testScheduler.currentTime})
-        engine.start(); runCurrent(); assertNull(engine.state.value.latest); assertTrue(engine.state.value.bluetoothConnected)
+        engine.start(); runCurrent(); assertNull(engine.state.value.latest); assertTrue(engine.state.value.transportConnected)
         advanceTimeBy(2001); runCurrent(); assertNotNull(engine.state.value.latest); assertEquals(1,connects); engine.stop()
     }
     @Test fun threeHartFailuresRecoverWithoutBreakingHealthyBluetoothAndVerifyIdentity() = runTest {
@@ -178,7 +178,7 @@ class MonitoringEngineTest {
         val conn=TestConnection(onSample={sample02(100,Float.NaN,Quality.BAD)})
         val engine=MonitoringEngine(backgroundScope,{conn},MemorySink())
         engine.start();runCurrent();assertEquals(MonitorPhase.MONITORING,engine.state.value.phase)
-        assertTrue(engine.state.value.bluetoothConnected);assertFalse(engine.state.value.latest!!.values.single().plottable);engine.stop()
+        assertTrue(engine.state.value.transportConnected);assertFalse(engine.state.value.latest!!.values.single().plottable);engine.stop()
     }
     @Test fun exhaustedHistoryStopsPollingAndRequestsDecisionInsteadOfReconnecting() = runTest {
         var connects=0

@@ -28,12 +28,12 @@ for row_number, row in enumerate(expected, 1):
         if wanted:
             assert cell.data_type == "s", (cell.coordinate, cell.data_type)
             assert cell.data_type != "f"
-assert any(cell.value and cell.value.startswith("00") for cell in list(sheet.columns)[1][1:])
+assert [cell.value for cell in list(sheet.columns)[1][1:]] == [str(i) for i in range(1,101)]
 assert any(cell.value == "07.2025" for cell in list(sheet.columns)[2][1:])
 assert any(cell.value == "2025" for cell in list(sheet.columns)[2][1:])
 result = {"file": path.name, "synthetic_data_only": True, "sheets": book.sheetnames,
           "columns": 5, "devices": 100, "compared_cells": 505,
           "freeze": sheet.freeze_panes, "filter": sheet.tables["WalkDevices"].autoFilter.ref,
-          "serial_leading_zeros_preserved": True, "date_precision_preserved": True}
+          "serial_unsigned_decimal_device_id": True, "date_precision_preserved": True}
 (args.directory / "walk-xlsx-validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
 print(json.dumps(result, ensure_ascii=False))

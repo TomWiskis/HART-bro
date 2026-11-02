@@ -17,7 +17,7 @@ object WalkExampleReview {
         val book=catalog.snapshot()
         File(directory,"TEST-ONLY-walk-100-devices.xlsx").outputStream().use{WalkXlsx.write(book,it)}
         File(directory,"TEST-ONLY-walk-100-devices.expected.tsv").bufferedWriter().use { writer ->
-            writer.appendLine(WalkXlsx.headers.joinToString("\t"));book.rows.forEach { row ->writer.appendLine(PassportField.entries.joinToString("\t"){row.text(it).orEmpty()}) }
+            writer.appendLine(WalkXlsx.headers.joinToString("\t"));book.rows.forEach { row ->writer.appendLine(PassportField.entries.joinToString("\t"){if(it==PassportField.SERIAL)row.observed.identity.deviceId.toString() else row.text(it).orEmpty()}) }
         }
         println("Synthetic walk workbook and 100-row comparison data written to ${directory.absolutePath}")
     }

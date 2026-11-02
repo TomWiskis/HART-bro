@@ -23,8 +23,8 @@ class BluetoothSppTransport private constructor(private val socket: BluetoothSoc
     private val incoming = Channel<ByteArray>(capacity = 64)
     @Volatile private var closed = false
     @Volatile private var disconnected: (() -> Unit)? = null
-    fun onDisconnect(listener: () -> Unit) { disconnected = listener; if (!isOpen) listener() }
-    val isOpen: Boolean get() = !closed && socket.isConnected
+    override fun onDisconnect(listener: () -> Unit) { disconnected = listener; if (!isOpen) listener() }
+    override val isOpen: Boolean get() = !closed && socket.isConnected
 
     init {
         scope.launch {

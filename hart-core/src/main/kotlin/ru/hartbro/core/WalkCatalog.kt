@@ -33,7 +33,7 @@ class WalkCatalog(initial: WalkBook = WalkBook()) {
     }
     @Synchronized fun snapshot() = book.copy(rows = book.rows.toList(), pending = book.pending.toList())
     private fun newRow(reading: PassportReading, separate: Boolean = false) = WalkRow(UUID.randomUUID().toString(), reading, reading.fields.toMap(), reading.range, manuallySeparated = separate)
-    @Synchronized fun ingest(reading: PassportReading, currentPending: String? = null): WalkMerge {
+    @Synchronized fun ingest(reading: PassportReading, currentPending: String? = null, reappeared: Boolean = false): WalkMerge {
         val targets = book.rows.filter { it.key == reading.key }
         if (targets.isEmpty()) {
             check(book.rows.size < 10000) { "Достигнут предел 10000 приборов: сохраните ведомость и начните следующий обход" }
@@ -41,9 +41,10 @@ class WalkCatalog(initial: WalkBook = WalkBook()) {
         }
         val target = targets.singleOrNull()
         val changedNumbers = target?.let { numbersChanged(it,reading) } ?: false
-        if (target == null || !reliablePassportKey(reading.identity) || changedNumbers) {
+        if (target == null || !reliablePassportKey(reading.identity) || changedNumbers || reappeared || book.pending.any { it.id==currentPending }) {
             val pending = PendingPassport(currentPending?.takeIf { id -> book.pending.any { it.id == id } } ?: UUID.randomUUID().toString(), reading,
-                if (changedNumbers) "Совпадает HART ID, но изменились номера сенсора/сборки. Проверьте прибор и разделите записи при необходимости."
+                if(reappeared) "Прибор обнаружен повторно после отсутствия. Тот же HART ID может принадлежать другому датчику: подтвердите строку или создайте новую."
+                else if (changedNumbers) "Совпадает HART ID, но изменились номера сенсора/сборки. Проверьте прибор и разделите записи при необходимости."
                 else "Идентификатор не позволяет однозначно выбрать строку. Требуется ручная проверка.")
             check(book.pending.size<10000 || book.pending.any { it.id==pending.id }) { "Достигнут предел несопоставленных чтений" }
             book = book.copy(pending = book.pending.filterNot { it.id == pending.id } + pending)

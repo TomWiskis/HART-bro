@@ -42,7 +42,7 @@ class MonitoringService : Service() {
                 if(state.rangeOwned) return@map "Настройка диапазона · ${state.range.message}"
                 if (state.walkActive) {
                     val w=state.walk;val r=w.recovery
-                    return@map "Обход · ${w.book?.rows?.size ?: 0} приборов · ${if(r!=null) "Bluetooth: осталось ${(r.remainingMillis+999)/1000} с; попытка ${r.attempt}" else w.message}"
+                    return@map "Обход · ${w.book?.rows?.size ?: 0} приборов · ${if(r!=null) "Связь: осталось ${(r.remainingMillis+999)/1000} с; попытка ${r.attempt}" else w.message}"
                 }
                 val m = state.monitor
                 val recovery = m.recovery

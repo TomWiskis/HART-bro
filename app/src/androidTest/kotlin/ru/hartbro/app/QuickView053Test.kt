@@ -81,10 +81,10 @@ class QuickView053Test {
             app.hartDeviceId=12345;app.sensorLongTag="REPLACED"
             waitFor{c.state.value.monitor.identity?.deviceId==12345 && c.state.value.monitor.configuration.tag=="REPLACED"}
             app.failIdentity=true;waitFor{!c.state.value.monitor.identificationResponding}
-            assertTrue(c.state.value.monitor.bluetoothConnected);assertNull(c.state.value.monitor.startedAt)
+            assertTrue(c.state.value.monitor.transportConnected);assertNull(c.state.value.monitor.startedAt)
             app.failIdentity=false;waitFor{c.state.value.monitor.identificationResponding}
-            app.closeRfcomm!!.invoke();waitFor{!c.state.value.monitor.bluetoothConnected}
-            waitFor{c.state.value.monitor.phase==MonitorPhase.READY && c.state.value.monitor.bluetoothConnected}
+            app.closeRfcomm!!.invoke();waitFor{!c.state.value.monitor.transportConnected}
+            waitFor{c.state.value.monitor.phase==MonitorPhase.READY && c.state.value.monitor.transportConnected}
             assertEquals(initialConnections+1,app.connections.get());assertEquals(samples,app.samples.get())
             ui.waitForIdle()
             ui.onNodeWithTag("setSensorZero").performScrollTo().assertIsEnabled().performClick()

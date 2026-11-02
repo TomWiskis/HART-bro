@@ -220,7 +220,7 @@ class FieldRegressionTest {
             assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
             assertEquals(MonitorPhase.ERROR, app.controller.state.value.monitor.phase)
             val connects = app.connections.get(); val writes = app.rangeWrites.get()
-            assertTrue(app.controller.state.value.monitor.bluetoothConnected)
+            assertTrue(app.controller.state.value.monitor.transportConnected)
             scenario.recreate()
             ui.onNodeWithTag("retryIdentification").performScrollTo().assertIsDisplayed()
             app.failIdentity = false; app.identifyDelay = 0
@@ -240,14 +240,14 @@ class FieldRegressionTest {
             waitFor { app.controller.state.value.monitor.phase == MonitorPhase.ERROR }
             val connects = app.connections.get(); val writes = app.rangeWrites.get()
             app.closeRfcomm!!.invoke()
-            waitFor { !app.controller.state.value.monitor.bluetoothConnected }
+            waitFor { !app.controller.state.value.monitor.transportConnected }
             scenario.recreate()
             ui.onNodeWithTag("retryIdentification").performScrollTo().assertIsDisplayed()
             app.failIdentity = false
             ui.onNodeWithTag("retryIdentification").performClick()
             waitFor { app.controller.state.value.monitor.phase == MonitorPhase.READY }
             assertEquals(connects + 1, app.connections.get())
-            assertTrue(app.controller.state.value.monitor.bluetoothConnected)
+            assertTrue(app.controller.state.value.monitor.transportConnected)
             assertNull(app.controller.history.bounds()); assertEquals(writes, app.rangeWrites.get())
         }
     }

@@ -6,4 +6,5 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "HART-bro"
-include(":hart-core", ":transport-bluetooth", ":app")
+include(":hart-core", ":transport-bluetooth", ":transport-usb", ":usb-serial", ":app")
+project(":usb-serial").projectDir = file("third-party/usb-serial")

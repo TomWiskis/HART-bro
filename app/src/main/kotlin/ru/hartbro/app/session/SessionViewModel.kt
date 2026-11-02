@@ -19,10 +19,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import ru.hartbro.app.HartApplication
 import ru.hartbro.bluetooth.BluetoothSppTransport
+import ru.hartbro.usb.*
 import ru.hartbro.core.*
 
 enum class ConnectionMode { MONITOR, WALK }
-data class Communicator(val name: String, val address: String, val likelyViator: Boolean)
+enum class TransportKind { BLUETOOTH, USB }
+data class Communicator(val name: String, val address: String, val likelyViator: Boolean,
+    val kind: TransportKind = if(address.startsWith("usb:"))TransportKind.USB else TransportKind.BLUETOOTH)
 data class SensorDiagnostics(val identity: DeviceIdentity, val configuration: ConfigurationSnapshot,
     val measurements: MeasurementBatch?, val range: RangeSnapshot? = null, val errors: List<String> = emptyList())
 data class SessionState(
@@ -31,6 +34,7 @@ data class SessionState(
     val communicator: Communicator? = null, val chartViewport: ChartViewport = ChartViewport(),
     val diagnosticVisible: Boolean = false, val diagnosticLoading: Boolean = false,
     val sensorDiagnostics: SensorDiagnostics? = null, val diagnosticError: String? = null,
+    val usbDevices: List<UsbTarget> = emptyList(), val usbPermissionPending: Boolean = false, val connectionRequestPending: Boolean = false,
     val devices: List<Communicator> = emptyList(), val bluetoothAvailable: Boolean = true,
     val bluetoothEnabled: Boolean = false, val permissionGranted: Boolean = false,
     val pendingConnection: Communicator? = null, val monitor: MonitorState = MonitorState(),
@@ -72,6 +76,8 @@ class SessionController(private val app: Application, private val connectionFact
     @Volatile private var lastMeasurement: Instant? = null
     @Volatile private var socketState = "нет соединения"
     @Volatile private var serviceLease = 0L
+    private val usbHost = UsbHostController(app,{text->append(DiagnosticEntry(Instant.now(),"USB",text))},
+        {devices->mutableState.update{it.copy(usbDevices=devices)}})
     private val adapter get() = app.getSystemService(BluetoothManager::class.java)?.adapter
     init { history.cleanOrphans(); scope.launch { runCatching{rangeJournal.recoverInterrupted();sensorJournal.recoverInterrupted()}.onFailure{notice("Журнал записей: ${it.message}")};refreshRangeRecords() };refreshArchives(); refreshWalks();mutableState.update { it.copy(walkDraftAvailable = walkStore.hasDraft()) } }
     fun append(entry: DiagnosticEntry) {
@@ -113,6 +119,7 @@ class SessionController(private val app: Application, private val connectionFact
     fun clearDiagnostics() { scope.launch { runCatching { journal.clear() }.onSuccess { mutableState.update { it.copy(diagnostics = emptyList(), diagnosticIncomplete = false) } }.onFailure { notice("Ошибка очистки: ${it.message}") } } }
     @SuppressLint("MissingPermission")
     fun refreshDevices(showPrompt: Boolean = false) {
+        usbHost.refresh()
         val granted = Build.VERSION.SDK_INT < 31 || app.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
         try {
             val bt = adapter
@@ -123,22 +130,36 @@ class SessionController(private val app: Application, private val connectionFact
             }.sortedWith(compareByDescending<Communicator> { it.likelyViator }.thenBy { it.name }) else emptyList()
             mutableState.update { it.copy(permissionGranted = granted, bluetoothAvailable = bt != null, bluetoothEnabled = enabled, devices = devices) }
             val viators = devices.filter { it.likelyViator }
-            if (showPrompt && !promptShown && !state.value.active && !state.value.walkDraftAvailable && state.value.monitor.startedAt == null && viators.size == 1) {
+            if (showPrompt && !promptShown && !state.value.active && !state.value.connectionRequestPending && !state.value.walkDraftAvailable && state.value.monitor.startedAt == null && viators.size == 1) {
                 promptShown = true; requestConnection(viators.single())
             }
         } catch (e: SecurityException) { notice("Нет разрешения Bluetooth: ${e.message}") }
     }
-    fun requestConnection(device: Communicator) { if (!state.value.active && state.value.monitor.startedAt == null) mutableState.update { it.copy(pendingConnection = device) } }
+    fun requestUsbConnection(target:UsbTarget,settings:UsbPortSettings,port:Int) {
+        if(state.value.active || state.value.usbPermissionPending)return
+        try {
+            usbHost.select(target,port,settings)
+            requestConnection(Communicator("ЭнИ-406 / ${target.name}","usb:${target.ids}:$port",false))
+        } catch(e:Exception){notice("USB: ${e.message}")}
+    }
+    fun requestConnection(device: Communicator) { if (!state.value.active && !state.value.connectionRequestPending && state.value.monitor.startedAt == null) mutableState.update { it.copy(pendingConnection = device) } }
     fun cancelConnectionPrompt() { mutableState.update { it.copy(pendingConnection = null) } }
     fun confirmConnection() {
         val selected = state.value.pendingConnection ?: return
-        cancelConnectionPrompt()
+        mutableState.update{it.copy(pendingConnection=null,connectionRequestPending=true)}
+        scope.launch {
         try {
+            if(selected.kind==TransportKind.USB) {
+                mutableState.update{it.copy(usbPermissionPending=true)}
+                usbHost.authorizeSelection()
+            }
             app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", selected.address).putExtra("name", selected.name).putExtra("mode", state.value.requestedMode.name))
+            withTimeoutOrNull(5000){state.first{it.active}}
         } catch (e: Exception) {
             val message = "Не удалось запустить подключение: ${e.javaClass.simpleName}: ${e.message}"
             append(DiagnosticEntry(Instant.now(), "SERVICE", "startForegroundService отклонён: $message"))
             mutableState.update { it.copy(notice = message, monitor = MonitorState(phase = MonitorPhase.ERROR, message = message)) }
+        } finally { mutableState.update{it.copy(usbPermissionPending=false,connectionRequestPending=false)} }
         }
     }
     fun start(address:String,name:String) { scope.launch { archiveActions.withLock { startMonitoringNow(address,name) } } }
@@ -169,7 +190,7 @@ class SessionController(private val app: Application, private val connectionFact
         var handed = initial
         val newEngine = MonitoringEngine(scope, connect = {
             handed?.also { handed = null } ?: createConnection(address)
-        }, sink = sink)
+        }, sink = sink, transportLossReason = if(communicator?.kind==TransportKind.USB)LossReason.USB else LossReason.BLUETOOTH)
         engine = newEngine
         observer = scope.launch { newEngine.state.collect { monitor ->
             val old = state.value.monitor
@@ -186,29 +207,47 @@ class SessionController(private val app: Application, private val connectionFact
     @SuppressLint("MissingPermission")
     private suspend fun createConnection(address: String): MonitorConnection {
         connectionFactory?.let { return it(address) }
-        val bt = adapter ?: throw IOException("Bluetooth недоступен")
-        if (!bt.isEnabled) throw IOException("Bluetooth выключен")
-        val device = bt.getRemoteDevice(address)
-        if (device.bondState != BluetoothDevice.BOND_BONDED) throw IOException("Коммуникатор не сопряжён")
-        socketState = "подключение"
-        val transport = BluetoothSppTransport.connect(device) { text -> socketState=text;append(DiagnosticEntry(Instant.now(), "BLUETOOTH", text)) }
-        socketState = "RFCOMM открыт"
-        val actualName=device.name ?: communicator?.name ?: "VIATOR"
-        communicator=Communicator(actualName,address,actualName.contains("viator",true))
-        mutableState.update{it.copy(communicator=communicator)}
+        val isUsb=communicator?.kind==TransportKind.USB
+        val transport:HartTransport = if(isUsb) {
+            socketState="USB: открытие"
+            usbHost.open().also{socketState="USB открыт"}
+        } else {
+            val bt = adapter ?: throw IOException("Bluetooth недоступен")
+            if (!bt.isEnabled) throw IOException("Bluetooth выключен")
+            val device = bt.getRemoteDevice(address)
+            if (device.bondState != BluetoothDevice.BOND_BONDED) throw IOException("Коммуникатор не сопряжён")
+            socketState = "подключение"
+            BluetoothSppTransport.connect(device) { text -> socketState=text;append(DiagnosticEntry(Instant.now(), "BLUETOOTH", text)) }.also {
+                socketState="RFCOMM открыт"
+                val actualName=device.name ?: communicator?.name ?: "VIATOR"
+                communicator=Communicator(actualName,address,actualName.contains("viator",true))
+                mutableState.update{state->state.copy(communicator=communicator)}
+            }
+        }
         return object : MonitorConnection {
             private lateinit var identity: DeviceIdentity
-            private var client = HartClient(transport, ::append, readAttempts = 1)
+            private val qualification=UsbReadQualification()
+            private fun observe(metric:HartTransactionMetric) {
+                append(DiagnosticEntry(Instant.now(),"PERF","command=${metric.command}; attempt=${metric.attempt}; durationMs=${metric.millis}; outcome=${metric.outcome}"))
+                qualification.observe(metric)
+            }
+            private fun newClient(timeout:Long=2500)=HartClient(transport,::append,timeoutMillis=timeout,readAttempts=1,
+                detailed={state.value.detailedDiagnostics},observed=::observe,
+                beforeWrite={if(isUsb)qualification.requireWriteAllowed(transport.isOpen)})
+            private var client = newClient()
             private var passportReader = PassportReader(client, report = ::event)
-            override suspend fun identify() = client.identify().first.also { identity = it }
+            override suspend fun identify() = client.identify().first.also {
+                qualification.identified(it);identity = it
+            }
             override val isOpen get() = transport.isOpen
             override fun onDisconnect(listener: () -> Unit) = transport.onDisconnect(listener)
             override fun prepareWalk() {
                 reader=null;readerClient=null
-                client=HartClient(transport, ::append, timeoutMillis=1500, readAttempts=1)
+                client=newClient(1500)
                 passportReader=PassportReader(client, report=::event)
             }
-            override fun prepareMonitoring() { reader=null;readerClient=null;client=HartClient(transport, ::append, readAttempts=1) }
+            override fun prepareMonitoring() { reader=null;readerClient=null;client=newClient() }
+            override fun preparePassportPresence() {passportReader=PassportReader(client,report=::event)}
             override fun resetSession() { reader=null;readerClient=null }
             override suspend fun passport(identity: DeviceIdentity) = passportReader.read(identity)
             override suspend fun rangeSnapshot()=RangeOperations(client).prepare().also{identity=it.identity}
@@ -225,7 +264,7 @@ class SessionController(private val app: Application, private val connectionFact
                 if(!reader!!.discovered) reader!!.discover()
                 return reader!!.sample()
             }
-            override fun close() { transport.close();readerClient=null }
+            override fun close() { transport.close();socketState="соединение закрыто";readerClient=null }
         }
     }
     // Tracks reader ownership, never shared concurrently: the engine is the sole connection owner.
@@ -354,8 +393,8 @@ class SessionController(private val app: Application, private val connectionFact
         engine?.finishSession()
         history.discard()
         lastMeasurement = null
-        event("Сессия завершена; временная история удалена; Bluetooth сохранён, если доступен")
-        if (!switching && engine?.state?.value?.bluetoothConnected != true) disconnectNow()
+        event("Сессия завершена; временная история удалена; Соединение сохранено, если доступно")
+        if (!switching && engine?.state?.value?.transportConnected != true) disconnectNow()
     }
     fun disconnect() { scope.launch { archiveActions.withLock {
         if (rangeLeaseActive || state.value.walkActive || state.value.monitor.startedAt != null) { notice("Сначала сохраните или завершите сессию / обход"); return@withLock }
@@ -377,13 +416,13 @@ class SessionController(private val app: Application, private val connectionFact
         }
         if (state.value.walkActive) {
             walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
-            mutableState.update { it.copy(active=false,walkActive=false,walkDraftAvailable=walkStore.hasDraft(),walk=it.walk.copy(phase=WalkPhase.INTERRUPTED,bluetoothConnected=false,recovery=null,message="Служба остановлена. Ведомость сохранена в черновике; продолжение — по вашему решению.")) }
+            mutableState.update { it.copy(active=false,walkActive=false,walkDraftAvailable=walkStore.hasDraft(),walk=it.walk.copy(phase=WalkPhase.INTERRUPTED,transportConnected=false,recovery=null,message="Служба остановлена. Ведомость сохранена в черновике; продолжение — по вашему решению.")) }
         } else if (state.value.active) {
             engine?.stop("Foreground service onDestroy; источник остановки Android не сообщает")
             val previous = engine?.state?.value ?: state.value.monitor
             observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
             mutableState.update { it.copy(active = false, monitor = previous.copy(phase = if (previous.startedAt != null) MonitorPhase.DECISION else MonitorPhase.ERROR,
-                bluetoothConnected = false, latest = null, recovery = null, message = if (previous.startedAt != null) "Служба остановлена. Временная история сохранена до вашего решения" else "Служба остановлена. Подключите коммуникатор повторно")) }
+                transportConnected = false, latest = null, recovery = null, message = if (previous.startedAt != null) "Служба остановлена. Временная история сохранена до вашего решения" else "Служба остановлена. Подключите коммуникатор повторно")) }
         }
     } } }
     fun showRangeHistory(){mutableState.update{it.copy(rangeVisible=true,rangeHistoryOnly=!it.rangeOwned && !it.range.busy)};refreshRangeRecords()}
@@ -397,7 +436,7 @@ class SessionController(private val app: Application, private val connectionFact
                 releaseRangeLease(old?.verification ?: old?.snapshot?.let{RangeVerification(it.identity,it.configuration)},rangeEngine?.connection,old?.record?.outcome !in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE),"Возврат от предыдущей настройки")
             }
             rangeObserver?.cancelAndJoin();rangeObserver=null
-            val selected=communicator ?: run {notice("Сначала подключите и идентифицируйте VIATOR");return@withLock}
+            val selected=communicator ?: run {notice("Сначала подключите и идентифицируйте коммуникатор");return@withLock}
             val record=recordId?.let(rangeJournal::load)
             val initial=when {
                 state.value.walkActive && walkEngine!=null -> {rangeContext=ConnectionMode.WALK;walkEngine!!.acquireConfiguration()}
@@ -415,7 +454,7 @@ class SessionController(private val app: Application, private val connectionFact
             })
             rangeEngine=worker
             mutableState.update{it.copy(rangeHistoryOnly=false,rangeOwned=true,rangeVisible=true,range=worker.state.value,notice=null)}
-            rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r,rangeTransportOpen=r.bluetoothConnected)}}}
+            rangeObserver=scope.launch{worker.state.collect{r->mutableState.update{it.copy(range=r,rangeTransportOpen=r.transportConnected)}}}
             if(record==null) worker.open() else worker.verifyOnly(record)
         } catch(e:Exception) {
             if(rangeLeaseActive)releaseRangeLease(null,rangeEngine?.connection,false,"Настройка не открыта: ${e.message}")
@@ -462,7 +501,7 @@ class SessionController(private val app: Application, private val connectionFact
         }
         mutableState.update { it.copy(requestedMode=ConnectionMode.WALK) }
         val selected=communicator
-        if (selected==null || !state.value.active) { notice("Выберите VIATOR на вкладке «Связь» и подтвердите подключение для обхода");return@withLock }
+        if (selected==null || !state.value.active) { notice("Выберите коммуникатор на вкладке «Связь» и подтвердите подключение для обхода");return@withLock }
         val initial=try { engine?.detachReadyConnection() } catch(e:IllegalStateException) { notice(e.message ?: "Дождитесь начала сессии");return@withLock }
         observer?.cancelAndJoin();observer=null;engine=null;reader=null;readerClient=null
         if (walkCatalog.snapshot().endedAt != null) walkCatalog=WalkCatalog()
@@ -479,7 +518,7 @@ class SessionController(private val app: Application, private val connectionFact
         mutableState.update { it.copy(communicator=selected,active=true,walkActive=true,requestedMode=ConnectionMode.WALK,monitor=MonitorState(),notice=null) }
         event("Обход начат: ${selected.name} (${selected.address}); только чтение; сохранение ведомости вручную")
         val worker=WalkEngine(scope,{createConnection(selected.address)},walkCatalog,
-            changed={ _ -> walkStore.writeDraft(walkCatalog::snapshot);mutableState.update { it.copy(walkDraftAvailable=true) } }, diagnostic=::event)
+            changed={ _ -> walkStore.writeDraft(walkCatalog::snapshot);mutableState.update { it.copy(walkDraftAvailable=true) } }, diagnostic=::event,transportLossReason=if(selected.kind==TransportKind.USB)LossReason.USB else LossReason.BLUETOOTH)
         walkEngine=worker
         walkObserver=scope.launch { worker.state.collect { walk -> mutableState.update { it.copy(walk=walk) } } }
         worker.start(initial)
@@ -495,7 +534,7 @@ class SessionController(private val app: Application, private val connectionFact
     fun restoreWalkDraft() { scope.launch { archiveActions.withLock {
         if (state.value.walkActive || state.value.monitor.startedAt!=null) { notice("Сначала завершите текущий опрос");return@withLock }
         runCatching { walkStore.restoreDraft() }.onSuccess { book ->
-            walkCatalog=WalkCatalog(book.copy(endedAt=null));mutableState.update { it.copy(walk=WalkState(phase=WalkPhase.INTERRUPTED,book=walkCatalog.snapshot(),message="Черновик восстановлен. Нажмите «Начать обход» и подтвердите VIATOR."),walkDraftAvailable=false,requestedMode=ConnectionMode.WALK) }
+            walkCatalog=WalkCatalog(book.copy(endedAt=null));mutableState.update { it.copy(walk=WalkState(phase=WalkPhase.INTERRUPTED,book=walkCatalog.snapshot(),message="Черновик восстановлен. Нажмите «Начать обход» и подтвердите коммуникатор."),walkDraftAvailable=false,requestedMode=ConnectionMode.WALK) }
         }.onFailure { notice("Черновик не прочитан: ${it.message}") }
     } } }
     fun discardWalkDraft() { scope.launch { archiveActions.withLock {
@@ -512,7 +551,7 @@ class SessionController(private val app: Application, private val connectionFact
         walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
         val finishedAt=Instant.now()
         if(save) try { walkStore.save(walkCatalog.snapshot().copy(endedAt=finishedAt)) } catch(e:Exception) {
-            mutableState.update { it.copy(walkActive=false,walk=it.walk.copy(phase=WalkPhase.INTERRUPTED,bluetoothConnected=false,message="Ведомость в памяти; не удалось сохранить: ${e.message}")) };notice("Сохранение не выполнено. Повторите или экспортируйте ведомость.");return@withLock
+            mutableState.update { it.copy(walkActive=false,walk=it.walk.copy(phase=WalkPhase.INTERRUPTED,transportConnected=false,message="Ведомость в памяти; не удалось сохранить: ${e.message}")) };notice("Сохранение не выполнено. Повторите или экспортируйте ведомость.");return@withLock
         }
         walkCatalog.finish(finishedAt)
         // The explicit finish releases RFCOMM. Permanent earlier snapshots remain after discard.

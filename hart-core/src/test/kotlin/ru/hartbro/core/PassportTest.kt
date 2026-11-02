@@ -43,6 +43,11 @@ private class PassportWire(val identity:DeviceIdentity,val answer:(Int)->ByteArr
     override fun discardBufferedInput()=buildList { while(true) add(queue.tryReceive().getOrNull() ?: break) }
     override fun close() {}
 }
+private fun explicitNumberProfile()=PassportProfiles(listOf(object:PassportProfile {
+    override val documentation="Test fixture explicitly requests optional technical fields"
+    override fun matches(identity:DeviceIdentity)=true
+    override val additionalReads=listOf(ReadCommand.SENSOR_INFORMATION,ReadCommand.FINAL_ASSEMBLY)
+}))
 class PassportTest {
     @Test fun sensorAndAssemblyDecodeUnsignedNumbersWithoutCallingThemFactorySerial() {
         val sensor=PassportDecoder.sensor(sensor040);assertEquals(1234,sensor.number);assertEquals(12,sensor.unitCode)
@@ -54,16 +59,16 @@ class PassportTest {
     @Test fun hart5UsesShortTagAndOnlyNecessaryLongAddressedReads()=runTest {
         val wire=PassportWire(identity040(revision=5));val client=HartClient(wire,readAttempts=1)
         val identity=client.identify().first;val result=PassportReader(client).read(identity)
-        assertEquals(listOf(0,13,15,14,16),wire.commands);assertTrue(wire.addresses.drop(1).all{it.size==5})
+        assertEquals(listOf(0,13,15),wire.commands);assertTrue(wire.addresses.drop(1).all{it.size==5})
         assertEquals("ABC",result.fields[PassportField.TAG]!!.value);assertEquals("0…10 кПа",result.range!!.label)
-        assertEquals("1234",result.candidates["sensorNumber"]!!.value);assertEquals("300",result.candidates["assemblyNumber"]!!.value)
+        assertFalse(result.candidates.containsKey("sensorNumber"));assertFalse(result.candidates.containsKey("assemblyNumber"))
         assertNull(result.fields[PassportField.SERIAL]!!.value);assertNull(result.fields[PassportField.DATE]!!.value)
         assertEquals("01 02 7E",result.candidates["hartDate"]!!.value)
     }
     @Test fun hart7PrefersLongTagAndKeepsIdentitySeparateFromFactoryFacts()=runTest {
         val wire=PassportWire(identity040());val client=HartClient(wire,readAttempts=1)
         val identity=client.identify().first;val result=PassportReader(client).read(identity)
-        assertEquals(listOf(0,20,15,14,16),wire.commands);assertEquals("LONG-TAG",result.fields[PassportField.TAG]!!.value)
+        assertEquals(listOf(0,13,15,20),wire.commands);assertEquals("LONG-TAG",result.fields[PassportField.TAG]!!.value)
         assertNull(result.fields[PassportField.SERIAL]!!.value);assertNull(result.fields[PassportField.DATE]!!.value)
         assertEquals("Метран · тип 0x9972",result.fields[PassportField.MODEL]!!.value)
         assertTrue(result.fields.values.filter{it.source!=FactSource.NONE}.all{it.readAt!=null && it.raw.isNotEmpty()})
@@ -76,13 +81,13 @@ class PassportTest {
     @Test fun unsupportedOptionalCommandsAreCachedPerIdentityAndDoNotAbort()=runTest {
         val wire=PassportWire(identity040()){cmd->if(cmd==0)identity040().raw else null};val client=HartClient(wire,readAttempts=1)
         val identity=client.identify().first;val reader=PassportReader(client);val first=reader.read(identity)
-        assertEquals(listOf(0,20,13,15,14,16),wire.commands);assertEquals(5,first.errors.size)
-        reader.read(identity);assertEquals(6,wire.commands.size);assertNull(first.range)
+        assertEquals(listOf(0,13,15,20),wire.commands);assertEquals(3,first.errors.size)
+        reader.read(identity);assertEquals(4,wire.commands.size);assertNull(first.range)
     }
     @Test fun silentOptional14or15or16RetainsOtherFieldsAndDoesNotDeclareBluetoothLoss()=runTest {
         for(cmd in listOf(14,15,16)) {
             val wire=PassportWire(identity040()).apply{missing=setOf(cmd)};val client=HartClient(wire,timeoutMillis=20,readAttempts=1)
-            val result=PassportReader(client).read(client.identify().first)
+            val result=PassportReader(client,explicitNumberProfile()).read(client.identify().first)
             assertTrue(result.errors.containsKey(cmd.toString()));assertFalse(result.transportLost)
             assertEquals("LONG-TAG",result.fields[PassportField.TAG]!!.value)
             if(cmd==15) assertNull(result.range) else assertNotNull(result.range)
@@ -91,19 +96,19 @@ class PassportTest {
     @Test fun corruptXorAndIncomplete14FramesDoNotBecomePassportNumbers()=runTest {
         for(corrupt in listOf(true,false)) {
             val wire=PassportWire(identity040()).apply{if(corrupt)corruptCommand=14 else truncatedCommand=14}
-            val client=HartClient(wire,timeoutMillis=20,readAttempts=1);val result=PassportReader(client).read(client.identify().first)
+            val client=HartClient(wire,timeoutMillis=20,readAttempts=1);val result=PassportReader(client,explicitNumberProfile()).read(client.identify().first)
             assertFalse(result.candidates.containsKey("sensorNumber"));assertTrue(result.errors.containsKey("14"))
             assertEquals("300",result.candidates["assemblyNumber"]!!.value)
         }
     }
     @Test fun shortSuccessful14and16AreReportedAsPartialFields()=runTest {
         val wire=PassportWire(identity040()){cmd->when(cmd){0->identity040().raw;14->byteArrayOf(1);16->byteArrayOf(1,2);else->null}}
-        val client=HartClient(wire,readAttempts=1);val result=PassportReader(client).read(client.identify().first)
+        val client=HartClient(wire,readAttempts=1);val result=PassportReader(client,explicitNumberProfile()).read(client.identify().first)
         assertTrue(result.errors.keys.containsAll(listOf("14","16")));assertTrue(result.candidates.isEmpty())
     }
     @Test fun physicalLossAfterTagReturnsPartialPassportWithoutDiscardingIt()=runTest {
         val wire=PassportWire(identity040()).apply{loseAt=14};val client=HartClient(wire,readAttempts=1)
-        val result=PassportReader(client).read(client.identify().first)
+        val result=PassportReader(client,explicitNumberProfile()).read(client.identify().first)
         assertTrue(result.transportLost);assertEquals("LONG-TAG",result.fields[PassportField.TAG]!!.value);assertNotNull(result.range)
         assertFalse(wire.commands.contains(16));assertTrue(result.errors.containsKey("16"))
     }
@@ -111,7 +116,7 @@ class PassportTest {
         fun profile(doc:String)=object:PassportProfile {
             override val documentation=doc
             override fun matches(identity:DeviceIdentity)=true
-            override val additionalReads=listOf(ReadCommand.TAG_DESCRIPTION)
+            override val additionalReads=listOf(ReadCommand.TAG_DESCRIPTION,ReadCommand.FINAL_ASSEMBLY)
             override fun model(identity:DeviceIdentity)="ТЕСТ документированный профиль"
             override fun factoryFields(identity:DeviceIdentity,replies:Map<ReadCommand,HartReply>)=mapOf(
                 PassportField.SERIAL to PassportFact("00300",FactSource.PROFILE,16,"00 01 2C",Instant.now(),confirmation=FactConfirmation.DOCUMENTED,documentation=doc),

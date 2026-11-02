@@ -114,10 +114,12 @@ class MainActivity : ComponentActivity() {
     }
     private fun exportWalk(book:WalkBook,share:Boolean) { lifecycleScope.launch {
         try {
+            val exportStarted=System.nanoTime()
             val file=withContext(Dispatchers.IO) {
                 val directory=File(cacheDir,"report-exports").apply { mkdirs() }
                 File(directory,"hart-walk-${book.id}-${System.currentTimeMillis()}.xlsx").also { file -> file.outputStream().use { WalkXlsx.write(book,it) } }
             }
+            model.controller.append(DiagnosticEntry(java.time.Instant.now(),"PERF","XLSX durationMs=${(System.nanoTime()-exportStarted)/1_000_000}; rows=${book.rows.size}"))
             if(share) {
                 val uri=FileProvider.getUriForFile(this@MainActivity,"$packageName.files",file)
                 startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(SessionXlsx.MIME).putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),"Отправить ведомость"))
@@ -178,6 +180,7 @@ class MainActivity : ComponentActivity() {
 private fun HartApp(state: SessionState, c: SessionController, permission: () -> Unit, enableBluetooth: () -> Unit,
                     pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit, exportWalk:(WalkBook,Boolean)->Unit,exportRange:(String)->Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var transportKind by rememberSaveable { mutableStateOf(TransportKind.BLUETOOTH) }
     var showOther by rememberSaveable { mutableStateOf(false) }
     var endPrompt by remember { mutableStateOf(false) }
     var archiveId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -245,6 +248,12 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                         Text("Подключение для: ${if(state.requestedMode==ConnectionMode.WALK) "обхода датчиков" else "мониторинга"}")
                         if(!state.active) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { ConnectionMode.entries.forEach { mode -> FilterChip(state.requestedMode==mode,{c.chooseMode(mode)},label={Text(if(mode==ConnectionMode.WALK) "Обход датчиков" else "Мониторинг")}) } }
                         TextButton(onClick=c::showRangeHistory){Text("История настройки диапазона")}
+                        if(!state.active)Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            FilterChip(transportKind==TransportKind.BLUETOOTH,{transportKind=TransportKind.BLUETOOTH},label={Text("VIATOR Bluetooth")})
+                            FilterChip(transportKind==TransportKind.USB,{transportKind=TransportKind.USB},label={Text("ЭнИ-406 USB")},modifier=Modifier.testTag("chooseUsb"))
+                        }
+                        if((state.communicator?.kind.takeIf{state.active} ?: transportKind)==TransportKind.USB)UsbConnectionScreen(state,c)
+                        else {
                         Text("Bluetooth VIATOR", style = MaterialTheme.typography.titleLarge)
                         Text("Цифровые HART-данные; настройка диапазона — по отдельному подтверждению. Давление и температура не вычисляются из 4–20 мА.")
                         when {
@@ -265,6 +274,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                                 }
                             } }
                         }
+                        }
                         if (state.active && !state.walkActive && monitor.startedAt == null) OutlinedButton(onClick = c::disconnect) { Text("Отключить коммуникатор") }
                         Text("В фоне работает видимая служба с уведомлением. Разрешите уведомления, чтобы получать запрос решения после потери связи. Android может остановить процесс; после принудительного завершения автоматического продолжения нет.", style = MaterialTheme.typography.bodySmall)
                     }
@@ -276,7 +286,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                     2 -> JournalScreen(state, c, archiveId, { archiveId = it }, export)
                     3 -> {
                         Text("Технический обмен и события сессии", style = MaterialTheme.typography.titleLarge)
-                        Text("Полный временный журнал до 16 МиБ. В списке — последние события. Копия содержит адрес Bluetooth и HART ID.")
+                        Text("Полный временный журнал до 16 МиБ. В списке — последние события. Копия содержит адрес коммуникатора, USB-дескрипторы и HART ID.")
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             Switch(state.detailedDiagnostics, c::detailedDiagnostics)
                             Text("Подробно: RX-CHUNK")
@@ -296,7 +306,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         }
     }
     state.pendingConnection?.let { d -> AlertDialog(onDismissRequest = c::cancelConnectionPrompt,
-        title = { Text("Подключить ${d.name}?") }, text = { Text(if(state.requestedMode==ConnectionMode.WALK) "${d.address}\nVIATOR будет подключён для обхода. Приборы определяются автоматически; отсутствие щупов означает ожидание следующего датчика. Сохранение ведомости выполняется вручную." else "${d.address}\nБудут установлены Bluetooth-соединение и идентификация датчика. Измерительная сессия запускается отдельно кнопкой «Начать сессию». Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
+        title = { Text("Подключить ${d.name}?") }, text = { Text(if(state.requestedMode==ConnectionMode.WALK) "${d.address}\nКоммуникатор будет подключён для обхода. Приборы определяются автоматически; отсутствие щупов означает ожидание следующего датчика. Сохранение ведомости выполняется вручную." else "${d.address}\nБудут открыты ${if(d.kind==TransportKind.USB)"USB-порт" else "Bluetooth-соединение"} и выполнена идентификация датчика. Измерительная сессия запускается отдельно кнопкой «Начать сессию». Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
         confirmButton = { TextButton(onClick = { confirm(); tab = if(state.requestedMode==ConnectionMode.WALK) 4 else 1 }) { Text("Подключить") } }, dismissButton = { TextButton(onClick = c::cancelConnectionPrompt) { Text("Отмена") } }) }
     if (decision || endPrompt) AlertDialog(onDismissRequest = { if (!decision) endPrompt = false },
         title = { Text(if (monitor.phase == MonitorPhase.DIFFERENT_DEVICE) "Обнаружен другой прибор" else if (decision) "Связь не восстановлена" else "Завершить сессию?") },
@@ -333,7 +343,7 @@ internal fun qualityText(q: Quality) = when(q) {
 private fun RecoveryPanel(progress: RecoveryProgress) {
     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Переподключение · ${(progress.remainingMillis+999)/1000} с", style = MaterialTheme.typography.titleMedium)
-        Text("Причина: ${when(progress.reason) { LossReason.BLUETOOTH -> "потеря Bluetooth"; LossReason.HART -> "нет ответа HART"; LossReason.UNKNOWN -> "неизвестно" }}")
+        Text("Причина: ${when(progress.reason) { LossReason.BLUETOOTH -> "потеря Bluetooth"; LossReason.USB -> "отключение USB"; LossReason.HART -> "нет ответа HART"; LossReason.UNKNOWN -> "неизвестно" }}")
         Text("Попытка ${progress.attempt}: ${progress.lastAttempt}", style = MaterialTheme.typography.bodySmall)
     } }
 }

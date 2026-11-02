@@ -24,7 +24,7 @@ class SessionLifecycle030Test {
         }
         val engine = MonitoringEngine(backgroundScope, { connection }, sink)
         engine.start(automaticSession = false); runCurrent(); advanceTimeBy(60000); runCurrent()
-        assertEquals(MonitorPhase.READY, engine.state.value.phase); assertTrue(engine.state.value.bluetoothConnected)
+        assertEquals(MonitorPhase.READY, engine.state.value.phase); assertTrue(engine.state.value.transportConnected)
         assertNull(engine.state.value.startedAt); assertEquals(0, begins); assertEquals(0, samples)
         val beforeStart=identifies
         engine.startSession(); engine.startSession(); runCurrent()
@@ -71,7 +71,7 @@ class SessionLifecycle030Test {
         val engine = MonitoringEngine(backgroundScope, { connection }, sink)
         engine.start(false); advanceTimeBy(5001); runCurrent()
         assertEquals(MonitorPhase.ERROR, engine.state.value.phase); assertEquals(0, begins); assertNull(engine.state.value.startedAt)
-        assertEquals(0, closes); assertTrue(engine.state.value.bluetoothConnected)
+        assertEquals(0, closes); assertTrue(engine.state.value.transportConnected)
         assertTrue(engine.state.value.message.contains("No initial HART reply")); engine.stop(); assertEquals(1, closes)
     }
 }

@@ -20,15 +20,17 @@ import java.time.Instant
 
 private val success = Color(0xFF168047)
 @Composable internal fun BluetoothBadge(state: SessionState) {
-    val connected = if(state.rangeOwned) state.rangeTransportOpen else if(state.walkActive) state.walk.bluetoothConnected else state.monitor.bluetoothConnected
-    val recovering = if(state.rangeOwned) state.range.phase == RangePhase.RECOVERING && !connected else if(state.walkActive) state.walk.recovery?.reason == LossReason.BLUETOOTH
-        else state.monitor.recovery?.reason == LossReason.BLUETOOTH || state.monitor.phase == MonitorPhase.CONNECTING && !connected
+    val connected = if(state.rangeOwned) state.rangeTransportOpen else if(state.walkActive) state.walk.transportConnected else state.monitor.transportConnected
+    val recovering = if(state.rangeOwned) state.range.phase == RangePhase.RECOVERING && !connected else if(state.walkActive) state.walk.recovery?.reason in setOf(LossReason.BLUETOOTH,LossReason.USB)
+        else state.monitor.recovery?.reason in setOf(LossReason.BLUETOOTH,LossReason.USB) || state.monitor.phase == MonitorPhase.CONNECTING && !connected
+    val usb=state.communicator?.kind==TransportKind.USB
     val name = state.communicator?.name ?: "Не подключён"
     val status = if(connected) "подключён" else if(recovering) "переподключение" else "отключён"
     Row(Modifier.widthIn(max=120.dp).padding(end=8.dp).testTag("bluetoothBadge")
-        .semantics(mergeDescendants=true) { contentDescription = "Bluetooth: $name, $status" }, verticalAlignment=Alignment.CenterVertically) {
+        .semantics(mergeDescendants=true) { contentDescription = "${if(usb)"USB" else "Bluetooth"}: $name, $status" }, verticalAlignment=Alignment.CenterVertically) {
         val color = if(connected) success else MaterialTheme.colorScheme.error
-        Canvas(Modifier.size(18.dp)) {
+        if(usb)Text("USB",color=if(connected)success else MaterialTheme.colorScheme.error,style=MaterialTheme.typography.labelSmall)
+        else Canvas(Modifier.size(18.dp)) {
             val points=listOf(0.5f to 0f, 0.5f to 1f, 0.9f to 0.7f, 0.15f to 0.2f, 0.15f to 0.8f, 0.9f to 0.3f, 0.5f to 0f)
             listOf(0 to 1,1 to 2,2 to 3,4 to 5,5 to 6).forEach { (a,b) ->
                 drawLine(color, Offset(points[a].first*size.width,points[a].second*size.height), Offset(points[b].first*size.width,points[b].second*size.height),2.dp.toPx())
@@ -63,7 +65,7 @@ private val success = Color(0xFF168047)
 }
 @OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun MonitorScreen(state:SessionState,c:SessionController) {
-    if(state.walkActive) { Text("VIATOR занят обходом. Завершите обход для мониторинга."); return }
+    if(state.walkActive) { Text("Коммуникатор занят обходом. Завершите обход для мониторинга."); return }
     val m=state.monitor
     if(m.startedAt==null) { QuickSensorCard(state,c); return }
     SensorHeading(state)
@@ -74,7 +76,7 @@ private val success = Color(0xFF168047)
     LaunchedEffect(Unit){while(true){kotlinx.coroutines.delay(1000);now=Instant.now()}}
     // A new reply can arrive between timer ticks. Always age it against the current render time.
     val currentTime=maxOf(now,Instant.now())
-    val fresh=m.bluetoothConnected && m.latest!=null && measurementFresh(batch?.receivedAt,currentTime,m.periodMillis) && m.phase==MonitorPhase.MONITORING
+    val fresh=m.transportConnected && m.latest!=null && measurementFresh(batch?.receivedAt,currentTime,m.periodMillis) && m.phase==MonitorPhase.MONITORING
     ReadingCard(primaryParameter(pv?.unitCode),pv?.takeIf{it.plottable}?.let{"${it.value.toString().replace('.',',')} ${it.unit}"} ?: "Нет данных",batch!=null && !fresh,"primaryReading")
     val loopFresh=fresh && measurementFresh(batch?.loopCurrentAt,currentTime,m.periodMillis)
     ReadingCard("Ток петли",batch?.loopCurrent?.takeIf{it.isFinite()}?.let{"${it.toString().replace('.',',')} мА"} ?: "Нет данных",batch?.loopCurrent!=null && !loopFresh,"loopReading")

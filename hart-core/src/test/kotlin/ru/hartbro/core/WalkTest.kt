@@ -24,7 +24,7 @@ class WalkTest {
         val engine=WalkEngine(backgroundScope,{connects++;connection},clock={testScheduler.currentTime})
         engine.start();runCurrent();assertEquals(1,engine.state.value.book!!.rows.size)
         present=null;advanceTimeBy(5000);runCurrent();assertEquals(WalkPhase.WAITING,engine.state.value.phase);assertNull(engine.state.value.recovery)
-        assertTrue(engine.state.value.bluetoothConnected);assertEquals(0,closes)
+        assertTrue(engine.state.value.transportConnected);assertEquals(0,closes)
         present=2;advanceTimeBy(1001);runCurrent();present=1;advanceTimeBy(1001);runCurrent()
         assertEquals(2,engine.state.value.book!!.rows.size);assertEquals(3,passports);assertEquals(1,connects);assertEquals(0,measurements)
         engine.stop();assertEquals(1,closes)
@@ -140,7 +140,7 @@ class WalkTest {
         assertEquals("A2",sheet.getElementsByTagName("pane").item(0).attributes.getNamedItem("topLeftCell").nodeValue)
         val cells=sheet.getElementsByTagName("c");for(i in 0 until cells.length) { val a=cells.item(i).attributes;assertEquals("inlineStr",a.getNamedItem("t").nodeValue);assertTrue(a.getNamedItem("r").nodeValue.first() in 'A'..'E') }
         assertEquals("A1:E101",xml("xl/tables/table1.xml").getElementsByTagName("autoFilter").item(0).attributes.getNamedItem("ref").nodeValue)
-        val text=String(parts.getValue("xl/worksheets/sheet1.xml"));assertTrue(text.contains("000000"));assertTrue(text.contains("−50…150 °C"));assertTrue(text.contains("0…2,5 МПа"));assertFalse(text.contains("HART Device ID"));assertFalse(text.contains("PV"))
+        val text=String(parts.getValue("xl/worksheets/sheet1.xml"));assertTrue(text.contains("<t xml:space=\"preserve\">1</t>"));assertTrue(text.contains("−50…150 °C"));assertTrue(text.contains("0…2,5 МПа"));assertFalse(text.contains("HART Device ID"));assertFalse(text.contains("PV"))
     }
     @Test fun readyConnectionCanBeTransferredBetweenActorsWithoutConcurrentReadsOrReconnect()=runTest {
         var measurements=0;var closes=0;var prepares=0

@@ -54,7 +54,7 @@ class WalkRegressionTest {
             val row=c.state.value.walk.book!!.rows.single();c.editWalk(row.id,mapOf(PassportField.SERIAL to "00042",PassportField.DATE to "07.2025"))
             waitFor{c.state.value.walk.book!!.rows.single().text(PassportField.SERIAL)=="00042"}
             app.failIdentity=true;waitFor{c.state.value.walk.phase==WalkPhase.WAITING}
-            assertTrue(c.state.value.walk.bluetoothConnected);assertNull(c.state.value.walk.recovery)
+            assertTrue(c.state.value.walk.transportConnected);assertNull(c.state.value.walk.recovery)
             // Two missing probes explicitly delimit a new physical attachment.
             SystemClock.sleep(2200);app.hartDeviceId=2;app.failIdentity=false;waitFor{c.state.value.walk.book!!.rows.size==2}
             device.pressHome();SystemClock.sleep(2100)

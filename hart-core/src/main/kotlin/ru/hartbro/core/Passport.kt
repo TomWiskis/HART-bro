@@ -92,15 +92,19 @@ class PassportReader(private val client: HartClient, private val profiles: Passp
         val fields = linkedMapOf<PassportField, PassportFact>();val candidates = linkedMapOf<String, PassportFact>()
         val profile = profiles.find(identity)
         var transportLost = false
-        suspend fun optional(command: ReadCommand): HartReply? {
-            if (transportLost) { errors[command.number.toString()] = "Bluetooth потерян до чтения поля";return null }
+        suspend fun optional(command: ReadCommand, retry: Boolean = true): HartReply? {
+            if (transportLost) { errors[command.number.toString()] = "Транспорт потерян до чтения поля";return null }
             if (command in unsupported[passportKey(identity)].orEmpty()) { errors[command.number.toString()] = "Команда ${command.number} не поддерживается";return null }
             return try { client.read(identity.address, command).also { replies[command] = it }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: java.io.IOException) {
-                transportLost = true;errors[command.number.toString()] = e.message ?: "Bluetooth потерян";null
+                transportLost = true;errors[command.number.toString()] = e.message ?: "Транспорт потерян";null
             } catch (e: Exception) {
                 if (e is HartResponseException && e.responseCode == 64) unsupported.getOrPut(passportKey(identity)) { mutableSetOf() } += command
+                if(retry && command in setOf(ReadCommand.TAG_DESCRIPTION,ReadCommand.DEVICE_INFORMATION) && e is HartTimeoutException) {
+                    report("PERF RETRY command=${command.number}; retry=1/1; reason=${e.message}")
+                    return optional(command,false)
+                }
                 errors[command.number.toString()] = (e.message ?: e.javaClass.simpleName).take(1500)
                 report("Паспорт: команда ${command.number}: ${e.message}; обход продолжается");null
             }
@@ -113,17 +117,12 @@ class PassportReader(private val client: HartClient, private val profiles: Passp
         fields[PassportField.MODEL] = PassportFact(profiles.model(identity), if (profile == null) FactSource.STANDARD_HART else FactSource.PROFILE,
             0, identity.raw.hex(), Instant.now(), confirmation = if (profile == null) FactConfirmation.UNCONFIRMED else FactConfirmation.DOCUMENTED,
             documentation = profile?.documentation)
-        if (identity.hartRevision >= 6) optional(ReadCommand.LONG_TAG)?.let { reply ->
-            runCatching { ConfigurationDecoder.longTag(reply.data).getValue("longTag").value }.onSuccess { if (it.isNotBlank()) fields[PassportField.TAG] = fact(it, ReadCommand.LONG_TAG) }
-                .onFailure { errors["20"] = it.message ?: "Некорректный Long TAG" }
-        }
-        if (PassportField.TAG !in fields || ReadCommand.TAG_DESCRIPTION in profile?.additionalReads.orEmpty()) {
-            optional(ReadCommand.TAG_DESCRIPTION)?.let { reply ->
-                runCatching { ConfigurationDecoder.tagDescription(reply.data) }.onSuccess { values ->
-                    if (PassportField.TAG !in fields) fields[PassportField.TAG] = fact(values.getValue("tag").value, ReadCommand.TAG_DESCRIPTION)
-                    candidates["hartDate"] = fact(values.getValue("deviceDateRaw").value, ReadCommand.TAG_DESCRIPTION)
-                }.onFailure { errors["13"] = it.message ?: "Некорректный TAG" }
-            }
+        // Required short TAG/date first, then range. Long TAG remains a used, revision-gated display field.
+        optional(ReadCommand.TAG_DESCRIPTION)?.let { reply ->
+            runCatching { ConfigurationDecoder.tagDescription(reply.data) }.onSuccess { values ->
+                fields[PassportField.TAG] = fact(values.getValue("tag").value, ReadCommand.TAG_DESCRIPTION)
+                candidates["hartDate"] = fact(values.getValue("deviceDateRaw").value, ReadCommand.TAG_DESCRIPTION)
+            }.onFailure { errors["13"] = it.message ?: "Некорректный TAG" }
         }
         var range: ConfiguredRange? = null
         optional(ReadCommand.DEVICE_INFORMATION)?.let { reply ->
@@ -131,15 +130,21 @@ class PassportReader(private val client: HartClient, private val profiles: Passp
                 .onSuccess { range = it;fields[PassportField.RANGE] = fact(it.label, ReadCommand.DEVICE_INFORMATION) }
                 .onFailure { errors["15"] = it.message ?: "Диапазон неизвестен" }
         }
-        optional(ReadCommand.SENSOR_INFORMATION)?.let { reply ->
-            runCatching { PassportDecoder.sensor(reply.data) }.onSuccess { candidates["sensorNumber"] = fact(it.number.toString(), ReadCommand.SENSOR_INFORMATION) }
-                .onFailure { errors["14"] = it.message ?: "Номер сенсора неизвестен" }
-        }
-        optional(ReadCommand.FINAL_ASSEMBLY)?.let { reply ->
-            runCatching { PassportDecoder.assembly(reply.data) }.onSuccess { candidates["assemblyNumber"] = fact(it.toString(), ReadCommand.FINAL_ASSEMBLY) }
-                .onFailure { errors["16"] = it.message ?: "Номер сборки неизвестен" }
+        if (identity.hartRevision >= 6) optional(ReadCommand.LONG_TAG)?.let { reply ->
+            runCatching { ConfigurationDecoder.longTag(reply.data).getValue("longTag").value }.onSuccess {
+                if(it.isNotBlank())fields[PassportField.TAG]=fact(it,ReadCommand.LONG_TAG)
+            }.onFailure { errors["20"]=it.message ?: "Некорректный Long TAG" }
         }
         profile?.additionalReads?.distinct()?.filter { it !in replies && it != ReadCommand.IDENTITY }?.forEach { optional(it) }
+        // Optional technical candidates exist only when an explicit documented profile requested them.
+        replies[ReadCommand.SENSOR_INFORMATION]?.let { reply ->
+            runCatching{PassportDecoder.sensor(reply.data)}.onSuccess{candidates["sensorNumber"]=fact(it.number.toString(),ReadCommand.SENSOR_INFORMATION)}
+                .onFailure{errors["14"]=it.message ?: "Номер сенсора неизвестен"}
+        }
+        replies[ReadCommand.FINAL_ASSEMBLY]?.let { reply ->
+            runCatching{PassportDecoder.assembly(reply.data)}.onSuccess{candidates["assemblyNumber"]=fact(it.toString(),ReadCommand.FINAL_ASSEMBLY)}
+                .onFailure{errors["16"]=it.message ?: "Номер сборки неизвестен"}
+        }
         if (profile != null) runCatching {
             profile.factoryFields(identity, replies).forEach { (key, value) ->
                 if (key in setOf(PassportField.SERIAL, PassportField.DATE) && value.factoryConfirmed &&

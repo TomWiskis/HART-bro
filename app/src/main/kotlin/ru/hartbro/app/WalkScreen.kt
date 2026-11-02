@@ -39,18 +39,18 @@ internal fun WalkScreen(state: SessionState,c: SessionController,onStart:()->Uni
     Text(if(savedId==null) "Обход датчиков" else "Сохранённая ведомость",style=MaterialTheme.typography.titleLarge)
     Text("Одна строка на прибор. Поля можно уточнять со шильдика — изменения сохраняются только в ведомости.")
     if(savedId==null) {
-        Text("VIATOR: ${if(state.walk.bluetoothConnected) "Bluetooth подключён" else "нет Bluetooth-соединения"}")
+        Text("${if(state.communicator?.kind==ru.hartbro.app.session.TransportKind.USB)"USB" else "Bluetooth"}: ${if(state.walk.transportConnected) "подключён" else "нет соединения"}")
         Text(state.walk.message,modifier=Modifier.testTag("walkStatus"))
         if(state.walkActive) {
             Text("Интервал обнаружения после ответа")
             FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 listOf(500L,1000L,2000L).forEach { ms -> FilterChip(state.walk.intervalMillis==ms,{c.walkInterval(ms)},label={Text(if(ms==500L) "0,5 с" else "${ms/1000} с")}) }
             }
-            OutlinedButton(onClick=c::rereadWalk,enabled=state.walk.bluetoothConnected) { Text("Повторить чтение текущего прибора") }
+            OutlinedButton(onClick=c::rereadWalk,enabled=state.walk.transportConnected) { Text("Повторить чтение текущего прибора") }
             state.walk.recovery?.let { p -> Text("Переподключение · ${(p.remainingMillis+999)/1000} с; попытка ${p.attempt}");LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if(state.walk.phase==WalkPhase.DECISION) {
-                Text("Полученные строки остаются в ведомости. Можно подключиться к VIATOR повторно или завершить обход.")
-                Button(onClick=c::retryWalk) { Text("Повторить подключение VIATOR") }
+                Text("Полученные строки остаются в ведомости. Можно подключиться к коммуникатору повторно или завершить обход.")
+                Button(onClick=c::retryWalk) { Text("Повторить подключение коммуникатора") }
                 OutlinedButton(onClick=onEnd) { Text("Завершить обход…") }
             }
         } else if(state.walkDraftAvailable && book==null) {
@@ -66,7 +66,7 @@ internal fun WalkScreen(state: SessionState,c: SessionController,onStart:()->Uni
             val last=book.rows.find { it.id==state.walk.lastRowId }
             Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                 Text("Последний прочитанный прибор",style=MaterialTheme.typography.titleMedium)
-                if(state.walkActive && state.walk.bluetoothConnected)Button(onClick={c.openRange()},enabled=!state.rangeOwned,modifier=Modifier.testTag("openWalkRange")){Text("Настроить диапазон")}
+                if(state.walkActive && state.walk.transportConnected)Button(onClick={c.openRange()},enabled=!state.rangeOwned,modifier=Modifier.testTag("openWalkRange")){Text("Настроить диапазон")}
                 Text(reading.identity.manufacturerDescription)
                 PassportField.entries.forEach { field ->
                     val fact=last?.fields?.get(field) ?: reading.fields[field]

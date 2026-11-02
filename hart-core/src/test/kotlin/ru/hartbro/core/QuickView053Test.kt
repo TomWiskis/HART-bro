@@ -37,16 +37,16 @@ class QuickView053Test {
         val wire=Wire();val engine=MonitoringEngine(backgroundScope,{wire},Sink())
         engine.start(false);runCurrent();val config=engine.state.value.configuration
         wire.fail=true;advanceTimeBy(1501);runCurrent()
-        assertEquals(config,engine.state.value.configuration);assertTrue(engine.state.value.bluetoothConnected);assertFalse(engine.state.value.identificationResponding)
+        assertEquals(config,engine.state.value.configuration);assertTrue(engine.state.value.transportConnected);assertFalse(engine.state.value.identificationResponding)
         assertTrue(engine.state.value.message.contains("0x20"));assertFalse(engine.state.value.hartExchangeCurrent(Instant.now()))
         wire.fail=false;advanceTimeBy(1500);runCurrent();assertTrue(engine.state.value.identificationResponding);assertTrue(wire.open);engine.stop()
     }
     @Test fun lostRfcommReconnectsForQuickViewAndAcceptsNextSensorWithoutPollingPv()=runTest {
         val first=Wire();val second=Wire().also{it.device=metran02.copy(deviceId=77)};var connects=0;val sink=Sink()
         val engine=MonitoringEngine(backgroundScope,{if(connects++==0)first else second},sink,monotonicMillis={testScheduler.currentTime})
-        engine.start(false);runCurrent();first.close();assertFalse(engine.state.value.bluetoothConnected)
+        engine.start(false);runCurrent();first.close();assertFalse(engine.state.value.transportConnected)
         advanceTimeBy(1501);runCurrent()
-        assertEquals(2,connects);assertEquals(MonitorPhase.READY,engine.state.value.phase);assertTrue(engine.state.value.bluetoothConnected)
+        assertEquals(2,connects);assertEquals(MonitorPhase.READY,engine.state.value.phase);assertTrue(engine.state.value.transportConnected)
         assertEquals(77,engine.state.value.identity!!.deviceId);assertEquals(0,second.samples);assertEquals(0,sink.begins);engine.stop()
     }
     @Test fun finishedSessionReturnsToPresencePollingAndOnlyButtonStartsAnotherHistory()=runTest {
