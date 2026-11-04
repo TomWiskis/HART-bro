@@ -1,0 +1,99 @@
+{
+  "version": "0.6.0",
+  "versionCode": 12,
+  "applicationId": "ru.hartbro.app",
+  "minSdk": 29,
+  "targetSdk": 36,
+  "sourceCommit": "cc0cc2c09c9e3de59194889a071c3d6b13afdd1c",
+  "appCodeCommit": "6b5720db6e602e3d1f17c781b260a88e8012e86a",
+  "sourceBranch": "feature/0.6.0-usb-walk",
+  "core": {
+    "tests": 247,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "usb": {
+    "tests": 18,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "ci": {
+    "runId": 41836778660,
+    "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41836778660",
+    "conclusion": "success",
+    "buildJobId": 126597617819,
+    "androidJobId": 126597617297
+  },
+  "android": {
+    "status": "success",
+    "counts": {
+      "tests": 35,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "smokeCounts": {
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "artifactUrl": "https://github.com/TomWiskis/HART-bro/actions/runs/41836778660/artifacts/13328014323",
+    "artifactDigest": "sha256:7fe418ff92629aacdf32dc0b5bf10f7119c8a7460a270572273621d5ba4fcf95",
+    "retainedBackgroundMinutes": [
+      5,
+      5,
+      5
+    ]
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 2,
+    "warningIds": [
+      "NewerVersionAvailable",
+      "UseKtx"
+    ]
+  },
+  "apk": {
+    "sha256": "2d3fafcc09f8b7966edc447c23aefd5e9735955e581fbfb5db5babe955c8f3bb",
+    "bytes": 32817913
+  },
+  "certificateSha256": "263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09",
+  "testFixturesAbsent": true,
+  "internetPermission": false,
+  "xlsx": {
+    "file": "TEST-ONLY-walk-100-devices.xlsx",
+    "synthetic_data_only": true,
+    "sheets": [
+      "Приборы"
+    ],
+    "columns": 5,
+    "devices": 100,
+    "compared_cells": 505,
+    "freeze": "A2",
+    "filter": "A1:E101",
+    "serial_unsigned_decimal_device_id": true,
+    "date_precision_preserved": true
+  },
+  "walkTimingFile": "walk-timing-0.6.0.json",
+  "realFieldFrames": [
+    "bad-xor-043442",
+    "partial-013358",
+    "success-four-ff-043449"
+  ],
+  "hardware": {
+    "eni406Tested": false,
+    "eniVidPidConfirmed": false,
+    "eniUartConfirmed": false,
+    "zeroCalibrationTested": false,
+    "viatorPassiveTested": false,
+    "eniPassiveTested": false
+  },
+  "reports": [
+    "USB_0.6.0.md",
+    "ZERO_0.6.0.md",
+    "PASSIVE_HART_0.6.0.md"
+  ]
+}
