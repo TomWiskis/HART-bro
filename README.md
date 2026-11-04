@@ -1,3 +1,21 @@
+# HART-бро 0.6.0 — USB OTG, устойчивость HART и установка нуля
+
+- [Скачать APK 0.6.0](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.6.0-debug.apk?download=1), Android 10+, versionCode 12, прежняя подпись.
+- [Архив проверок и подтверждений CI](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.6.0-test-results.zip?download=1).
+- [Успешный CI: 265 JVM / 35 Android](https://github.com/TomWiskis/HART-bro/actions/runs/41836778660), без ошибок/пропусков; сохранены три пятиминутных фоновых периода.
+- [Исходники](https://github.com/TomWiskis/HART-bro/tree/feature/0.6.0-usb-walk) · [изменения](https://github.com/TomWiskis/HART-bro/blob/feature/0.6.0-usb-walk/docs/CHANGES_0.6.0.md) · [проверки](https://github.com/TomWiskis/HART-bro/blob/feature/0.6.0-usb-walk/docs/VALIDATION_0.6.0.md).
+- [Отчёт по нулю](https://github.com/TomWiskis/HART-bro/blob/feature/0.6.0-usb-walk/docs/ZERO_0.6.0.md) · [Пассивный приём](https://github.com/TomWiskis/HART-bro/blob/feature/0.6.0-usb-walk/docs/PASSIVE_HART_0.6.0.md) · [USB-план](https://github.com/TomWiskis/HART-bro/blob/feature/0.6.0-usb-walk/docs/USB_0.6.0.md).
+
+Общий HART-клиент для USB ЭнИ-406 и Bluetooth VIATOR, USB-диагностика/разрешения/восстановление, отдельный статус транспорта и HART. До трёх начальных попыток идентификации, раздельные таймауты, строгий XOR/4 FF. Метран-150R определяется по 0x0026/0x2662/Rev 9 с сохранением исходных кодов. Обход 0→13→15→20, timeout поиска 1500 мс, пауза 400 мс, десятичный Device ID в XLSX и явное решение по повторному ID.
+
+Стандартная установка нуля 43 доступна неизвестной модели давления после чтения PV и отдельного подтверждения: одна передача, контроль по известным допуску/разрешению, честный неподтверждённый исход при недостатке данных. 35 не повторяется. Есть приём без собственных HART-запросов, импорт/сравнение HEX и сохранение сценариев без воспроизведения неизвестных пакетов.
+
+**Физические ЭнИ-406, калибровка и пассивная видимость чужого обмена здесь не испытывались.** VID/PID/UART конкретного ЭнИ не подтверждены: введите настройки из документации/работающей программы, сначала проверьте устойчивое чтение. Варианту без БП нужно внешнее питание датчика. Программные тесты не подтверждают аппаратную совместимость.
+
+Подпись SHA-256 `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`. APK SHA-256 `2d3fafcc09f8b7966edc447c23aefd5e9735955e581fbfb5db5babe955c8f3bb`. Прежние данные читаются, устанавливайте поверх без удаления приложения. Для закрытого репозитория нужен вход в GitHub. Полные Android JUnit/HTML/PNG — в артефакте CI, архив выше содержит локальные проверки и ссылку на него.
+
+---
+
 # HART-бро 0.5.3 — быстрый просмотр и параметры
 
 - [Скачать APK 0.5.3](https://github.com/TomWiskis/HART-bro/raw/refs/heads/downloads/hart-bro-0.5.3-debug.apk?download=1), Android 10+, versionCode 11.
