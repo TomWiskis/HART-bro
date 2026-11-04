@@ -26,7 +26,7 @@ object SessionPdf {
             report.table(listOf("Параметр", "Значение"), listOf(155f, 368f), listOf(
                 listOf("TAG", register.tag ?: "Нет данных"), listOf("Заводской серийный номер", register.factorySerial ?: "Нет данных"),
                 listOf("Дата выпуска", register.manufacturedOn?.toString() ?: "Нет данных"), listOf("Тип / марка", register.model),
-                listOf("Производитель", info.manufacturer), listOf("HART Device ID", info.deviceKey), listOf("Версия HART", hart ?: "Нет данных"),
+                listOf("Прибор", info.deviceTitle), listOf("Производитель по HART", info.manufacturer), listOf("HART Device ID", info.deviceKey), listOf("Версия HART", hart ?: "Нет данных"),
                 listOf("Настроенный диапазон", register.configuredRange ?: "Диапазон неизвестен"), listOf("Коммуникатор", info.communicator)
             ).asSequence())
             report.line("HART Device ID не является заводским номером; редактируемая HART Date не подтверждает дату изготовления.", 9f)

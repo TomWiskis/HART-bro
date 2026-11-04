@@ -59,7 +59,7 @@ internal fun JournalScreen(state: SessionState, c: SessionController, archiveId:
                 Column {
                     Text(info.title.ifBlank { info.configuration.tag ?: info.deviceKey }, style = MaterialTheme.typography.titleMedium)
                     Text("${timeLabel(info.startedAt)} · ${info.durationMillis / 1000} с")
-                    Text("${info.manufacturer} · ${info.configuration.range?.label ?: "Диапазон неизвестен"}", style = MaterialTheme.typography.bodySmall)
+                    Text("${info.deviceTitle} · ${info.configuration.range?.label ?: "Диапазон неизвестен"}", style = MaterialTheme.typography.bodySmall)
                 }
             }
             FlowRow {
@@ -73,7 +73,7 @@ internal fun JournalScreen(state: SessionState, c: SessionController, archiveId:
         if (info == null) { Text("Запись недоступна"); return }
         Text(info.title.ifBlank { info.configuration.tag ?: info.deviceKey }, style = MaterialTheme.typography.titleMedium)
         Text("${timeLabel(info.startedAt)} — ${timeLabel(info.endedAt)} · ${info.durationMillis / 1000} с")
-        Text("${info.communicator}\n${info.manufacturer} · ${info.deviceKey}")
+        Text("${info.communicator}\n${info.deviceTitle} · ${info.deviceKey}")
         TextButton(onClick = { editing = archiveId to info }) { Text("Название и комментарий…") }
         if (info.comment.isNotBlank()) Text(info.comment)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

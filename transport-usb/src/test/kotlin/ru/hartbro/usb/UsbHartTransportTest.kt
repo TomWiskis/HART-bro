@@ -98,4 +98,52 @@ class UsbHartTransportTest {
         assertTrue(result.exceptionOrNull() is HartTimeoutException)
         assertEquals(1,port.writes.size);assertTrue(transport.isOpen);transport.close()
     }
+    @Test(timeout=10000) fun universalZeroUsesTheSameUsbPortAndNeverRepeatsAfterMissingAck()=runBlocking {
+        for(lostAck in listOf(false,true)) {
+            val port=Port();val transport=UsbHartTransport(port,settings())
+            val requests=java.util.Collections.synchronizedList(mutableListOf<HartFrame>())
+            var zeroSent=false
+            port.answer={tx->
+                val q=(HartDecoder().accept(tx).single() as DecodeEvent.Frame).value;requests+=q
+                val data=when(q.command) {
+                    0->byteArrayOf(0xFE.toByte(),0x26,0x62,5,5,9,3,8,0,0xBF.toByte(),0x2C,0x34)
+                    15->ByteArray(17).also{it[0]=250.toByte();it[2]=12;java.nio.ByteBuffer.wrap(it).putFloat(3,16f).putFloat(7,0f)}
+                    1->byteArrayOf(12)+java.nio.ByteBuffer.allocate(4).putFloat(if(zeroSent)0f else .25f).array()
+                    43->{zeroSent=true;byteArrayOf()}
+                    else->error("Unexpected command ${q.command}")
+                }
+                if(q.command!=43 || !lostAck) {
+                    val payload=byteArrayOf(0,0)+data
+                    val body=byteArrayOf(if(q.address.size==1)6 else 0x86.toByte())+q.address+byteArrayOf(q.command.toByte(),payload.size.toByte())+payload
+                    port.receive(ByteArray(4){0xFF.toByte()}+body+HartCodec.checksum(body))
+                }
+            }
+            val client=HartClient(transport,timeoutMillis=100,readAttempts=3)
+            val id=client.identify().first
+            val dir=java.nio.file.Files.createTempDirectory("usb-zero060").toFile()
+            try {
+                val options=ZeroOptions(conditionsConfirmed=true,pressureConfirmed=true,tolerance=.001f,accuracySource="Synthetic USB test accuracy",unitCode=12)
+                val r=SensorOperations(client).apply(SensorEdit(id,SensorField.ZERO,"","0",options,"Scripted USB port"),SensorJournal(dir)).record
+                assertEquals(if(lostAck)SensorOutcome.NO_ACK else SensorOutcome.SUCCEEDED,r.outcome)
+                assertEquals(1,requests.count{it.command==43});assertEquals(0,requests.single{it.command==43}.payload.size)
+                assertArrayEquals(id.address.bytes,requests.single{it.command==43}.address)
+                assertTrue(requests.none{it.command==35});assertTrue(transport.isOpen);assertEquals(3,r.pvAfter.size)
+            } finally {transport.close();dir.deleteRecursively()}
+        }
+    }
+    @Test(timeout=10000) fun nativeWriteTimeoutIsTransportFailureAndDoesNotRetryCommand35()=runBlocking {
+        val released=java.util.concurrent.CountDownLatch(1);val writes=AtomicInteger()
+        val port=object:SerialPortIo {
+            override fun start(received:(ByteArray)->Unit,failed:(Exception)->Unit){}
+            override fun write(bytes:ByteArray){writes.incrementAndGet();released.await()}
+            override fun rts(value:Boolean){}
+            override fun close(){released.countDown()}
+        }
+        val transport=UsbHartTransport(port,settings());val metrics=mutableListOf<HartTransactionMetric>()
+        val client=HartClient(transport,timeoutMillis=100,readAttempts=3,observed={metrics+=it})
+        val error=runCatching{client.transaction{writeRange(HartAddress.Long(0x2662,0xBF2C34),WriteRange(ConfiguredRange(0f,1f,12))) {}}}.exceptionOrNull()
+        assertTrue(error is HartWriteIOException);assertFalse(transport.isOpen);assertEquals(1,writes.get())
+        assertEquals(setOf(HartFailureKind.TRANSPORT),metrics.single().failures)
+    }
+
 }

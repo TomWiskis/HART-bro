@@ -25,7 +25,7 @@ class QuickView053Test {
     private val c get()=app.controller
     private fun waitFor(test:()->Boolean){val end=SystemClock.elapsedRealtime()+25_000;while(!test() && SystemClock.elapsedRealtime()<end)SystemClock.sleep(100);assertTrue(c.state.value.toString(),test())}
     @Before fun reset(){
-        app.stopRegressionOwners();c.closeSensorEdit();app.sensorMode=true;app.viatranProfile=false;app.sensorPv=.25f;app.sensorWrites.set(0)
+        app.stopRegressionOwners();c.closeSensorEdit();app.sensorMode=true;app.viatranProfile=false;app.metran150RProfile=false;app.sensorPv=.25f;app.sensorWrites.set(0)
         app.sensorLongTag="TEST-TAG";app.sensorTagDate=byteArrayOf(4,32,0xE0.toByte(),0x82.toByte(),8,32)+ByteArray(12){0x82.toByte()}+byteArrayOf(1,2,126)
         app.hartDeviceId=0x5FCA7F;app.failIdentity=false;app.identifyDelay=0;app.rangeMode=0;app.rangeHoldAck=false;app.rangeAckDelay=0;app.rangeTimeout=300
         app.hartFailures.set(0);app.bluetoothFailures.set(0);app.rangeWrites.set(0);app.rangeActual=ConfiguredRange(0f,16f,12)
@@ -88,8 +88,8 @@ class QuickView053Test {
             assertEquals(initialConnections+1,app.connections.get());assertEquals(samples,app.samples.get())
             ui.waitForIdle()
             ui.onNodeWithTag("setSensorZero").performScrollTo().assertIsEnabled().performClick()
-            waitFor{c.state.value.notice?.contains("не подтверждена")==true}
-            assertEquals(0,app.sensorWrites.get())
+            ui.onNodeWithTag("sensorEditDialog").assertExists();ui.onNodeWithTag("sensorEditApply").assertIsNotEnabled()
+            assertEquals(0,app.sensorWrites.get());c.closeSensorEdit();waitFor{c.state.value.sensorEdit==null}
             s.recreate();ui.onNodeWithTag("startSession").performScrollTo().performClick()
             waitFor{c.state.value.monitor.startedAt!=null && c.state.value.monitor.latest!=null}
             ui.onNodeWithTag("primaryReading").performScrollTo().assertExists();assertEquals(0,app.rangeWrites.get())
@@ -99,6 +99,11 @@ class QuickView053Test {
         app.viatranProfile=true
         ActivityScenario.launch(MainActivity::class.java).use{s->
             connect(s);ui.onNodeWithTag("setSensorZero").performScrollTo().performClick()
+            assertEquals(0,app.sensorWrites.get())
+            ui.onNodeWithTag("zeroTolerance").performScrollTo().performTextReplacement("0.001")
+            ui.onNodeWithTag("zeroAccuracySource").performScrollTo().performTextReplacement("Test fixture accuracy");ui.onNodeWithTag("zeroAccuracySource").performImeAction()
+            ui.onNodeWithTag("zeroPressureConsent").performScrollTo().performClick();ui.onNodeWithTag("zeroConditionsConsent").performScrollTo().performClick()
+            ui.onNodeWithTag("sensorEditApply").performClick();waitFor{!c.state.value.editBusy && c.state.value.editConfirm && c.state.value.zeroPreparation!=null}
             assertEquals(0,app.sensorWrites.get());s.recreate()
             ui.onNodeWithTag("sensorEditApply").performClick()
             c.confirmSensorEdit();c.confirmSensorEdit()

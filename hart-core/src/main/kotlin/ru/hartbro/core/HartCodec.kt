@@ -40,7 +40,7 @@ data class HartFrame(
 
 sealed interface DecodeEvent {
     data class Frame(val value: HartFrame) : DecodeEvent
-    data class Rejected(val reason: String, val raw: ByteArray) : DecodeEvent
+    data class Rejected(val reason: String, val raw: ByteArray, val failure:HartFailureKind = HartFailureKind.NO_MATCH) : DecodeEvent
 }
 
 object HartCodec {
@@ -82,7 +82,7 @@ class HartDecoder {
         val events = mutableListOf<DecodeEvent>()
         buffer += bytes
         if (buffer.size > 8192) {
-            events += DecodeEvent.Rejected("Переполнение буфера HART", buffer.copyOfRange(0, 64))
+            events += DecodeEvent.Rejected("Переполнение буфера HART", buffer.copyOfRange(0, 64),HartFailureKind.LENGTH)
             buffer = buffer.takeLast(1024).toByteArray()
         }
         while (buffer.isNotEmpty()) {
@@ -117,14 +117,14 @@ class HartDecoder {
             if (buffer.size < total) break
             val raw = buffer.copyOfRange(0, total)
             if (HartCodec.checksum(raw.copyOfRange(preambles, total)) != 0.toByte()) {
-                events += DecodeEvent.Rejected("Неверная контрольная сумма", raw)
+                events += DecodeEvent.Rejected("Неверная контрольная сумма XOR", raw,HartFailureKind.CHECKSUM)
                 // Search again, including inside corrupt frames with an invalid byte count.
                 buffer = buffer.copyOfRange(1, buffer.size); continue
             }
             buffer = buffer.copyOfRange(total, buffer.size)
             val response = (delimiter and 7) in setOf(6, 1)
             if (response && count < 2) {
-                events += DecodeEvent.Rejected("В ответе отсутствуют код ответа и статус", raw); continue
+                events += DecodeEvent.Rejected("В ответе отсутствуют код ответа и статус", raw,HartFailureKind.LENGTH); continue
             }
             events += DecodeEvent.Frame(HartFrame(
                 delimiter, raw.copyOfRange(preambles + 1, preambles + 1 + addressSize),

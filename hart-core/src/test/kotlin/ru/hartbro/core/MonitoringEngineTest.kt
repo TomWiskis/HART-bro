@@ -29,18 +29,19 @@ private class TestConnection(
 class MonitoringEngineTest {
     @Test fun failedIdentificationCanRepeatOnSameOpenConnectionWithoutStartingSession() = runTest {
         var attempts = 0; var connects = 0
-        val conn = TestConnection(onIdentify = { if (++attempts <= 2) throw HartTimeoutException("missing XOR") else metran02 })
+        val conn = TestConnection(onIdentify = { if (++attempts <= 6) throw HartTimeoutException("missing XOR") else metran02 })
         val sink = MemorySink()
         val engine = MonitoringEngine(backgroundScope, { connects++; conn }, sink)
-        engine.start(false); runCurrent()
+        engine.start(false); runCurrent();assertEquals(MonitorPhase.CONNECTING,engine.state.value.phase)
+        advanceTimeBy(701);runCurrent()
         repeat(2) {
             assertEquals(MonitorPhase.ERROR, engine.state.value.phase)
             assertTrue(engine.state.value.transportConnected); assertNull(engine.state.value.identity)
             assertEquals(0, conn.closes); assertEquals(0, sink.begins)
-            engine.retryIdentification(); runCurrent()
+            engine.retryIdentification(); runCurrent();advanceTimeBy(701);runCurrent()
         }
         assertEquals(MonitorPhase.READY, engine.state.value.phase)
-        assertEquals(1, connects); assertEquals(3, attempts); assertEquals(0, sink.begins)
+        assertEquals(1, connects); assertEquals(7, attempts); assertEquals(0, sink.begins)
         engine.startSession(); runCurrent()
         assertEquals(MonitorPhase.MONITORING, engine.state.value.phase); assertEquals(1, sink.begins)
         engine.stop()
@@ -56,7 +57,7 @@ class MonitoringEngineTest {
             override fun close() { opened = false; disconnect?.invoke() }
         }
         val engine = MonitoringEngine(backgroundScope, { if (++connects == 1) old else TestConnection(onIdentify = { delay(50); metran02 }) }, MemorySink())
-        engine.start(false); runCurrent(); assertTrue(engine.state.value.transportConnected)
+        engine.start(false); advanceTimeBy(701);runCurrent();assertEquals(MonitorPhase.ERROR,engine.state.value.phase); assertTrue(engine.state.value.transportConnected)
         old.close(); assertFalse(engine.state.value.transportConnected)
         val retries = List(3) { async { engine.retryIdentification() } }
         runCurrent(); retries.awaitAll()

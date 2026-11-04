@@ -14,6 +14,7 @@ data class RangeRecord(val id:String=UUID.randomUUID().toString(),val time:Insta
                        val outcome:RangeOutcome=RangeOutcome.PENDING,val stage:WriteStage=WriteStage.PREPARED,val errors:List<String> = emptyList()) {
     fun text():String=buildString {
         appendLine("HART-бро — операция конфигурирования $id");appendLine("Время UTC: $time")
+        appendLine("Модель: ${HartDeviceCatalog.title(identity)}; ревизия ${identity.deviceRevision}")
         appendLine("Прибор: ${identity.manufacturerDescription}; тип 0x%04X; Device ID %06X; HART ${identity.hartRevision}".format(identity.deviceType,identity.deviceId))
         appendLine("TAG: ${tag ?: "не получен"}; команда 35")
         appendLine("Исходный: ${original.label}; код единицы ${original.unitCode}");appendLine("Запрошен: ${requested.label}; код единицы ${requested.unitCode}")

@@ -49,6 +49,26 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { model.controller.notice("Ошибка сохранения HEX: ${e.message}") }
         }
     }
+    private var importAnalysisBaseline=false
+    private val importAnalysis=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->
+        if(uri!=null) {
+            val baseline=importAnalysisBaseline
+            lifecycleScope.launch {
+                try {
+                    val text=withContext(Dispatchers.IO){contentResolver.openInputStream(uri)?.use{input->
+                        HartLogImport.readText(input)
+                    } ?: error("Файл недоступен")}
+                    model.controller.importAnalysis(text,baseline,"Импортированный HEX")
+                }catch(e:Exception){model.controller.notice("Импорт HEX: ${e.message}")}
+            }
+        }
+    }
+    private val saveAnalysis=registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri->
+        if(uri!=null)lifecycleScope.launch{
+            try {withContext(Dispatchers.IO){contentResolver.openOutputStream(uri,"wt")?.use(model.controller::writeAnalysis) ?: error("Файл недоступен")};model.controller.notice("Анализ сохранён")}
+            catch(e:Exception){model.controller.notice("Экспорт анализа: ${e.message}")}
+        }
+    }
     private var pendingRangeReport:String?=null
     private val saveRangeLog=registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri->
         val id=pendingRangeReport;pendingRangeReport=null
@@ -127,6 +147,7 @@ class MainActivity : ComponentActivity() {
         } catch(e:Exception) { model.controller.notice("Ошибка экспорта ведомости: ${e.message}") }
     } }
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("analysisImportBaseline",importAnalysisBaseline)
         pendingExport?.let { outState.putStringArrayList("exportIds", ArrayList(it.ids)); outState.putString("exportFormat", it.format.name); outState.putInt("exportSeparator", it.separator.code) }
         pendingWalkFile?.let { outState.putString("walkExportFile",it.name) }
         pendingRangeReport?.let{outState.putString("rangeReportId",it)}
@@ -143,6 +164,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
         savedInstanceState?.let { saved ->
+            importAnalysisBaseline=saved.getBoolean("analysisImportBaseline",false)
             saved.getString("walkExportFile")?.takeIf { it==File(it).name && it.startsWith("hart-walk-") && it.endsWith(".xlsx") }?.let { pendingWalkFile=File(cacheDir,"report-exports/$it").takeIf(File::isFile) }
             pendingRangeReport=saved.getString("rangeReportId")
             val ids = saved.getStringArrayList("exportIds") ?: saved.getString("exportId")?.let { arrayListOf(it) }
@@ -165,7 +187,8 @@ class MainActivity : ComponentActivity() {
                         } catch (e: CancellationException) { throw e
                         } catch (e: Exception) { model.controller.notice("Буфер обмена недоступен: ${e.message}. Сохраните TXT.") }
                     } },
-                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex, export = ::export,exportWalk=::exportWalk,exportRange={id->pendingRangeReport=id;saveRangeLog.launch("hart-range-$id.txt")})
+                    saveHex = { saveHex.launch("hart-hex-${System.currentTimeMillis()}.txt") }, shareHex = ::shareHex, export = ::export,exportWalk=::exportWalk,exportRange={id->pendingRangeReport=id;saveRangeLog.launch("hart-range-$id.txt")},
+                    importAnalysis={baseline->importAnalysisBaseline=baseline;importAnalysis.launch(arrayOf("text/*","application/octet-stream"))},exportAnalysis={saveAnalysis.launch("hart-analysis-${System.currentTimeMillis()}.txt")})
             }
         }
     }
@@ -178,7 +201,7 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun HartApp(state: SessionState, c: SessionController, permission: () -> Unit, enableBluetooth: () -> Unit,
-                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit, exportWalk:(WalkBook,Boolean)->Unit,exportRange:(String)->Unit) {
+                    pair: () -> Unit, confirm: () -> Unit, copy: () -> Unit, saveHex: () -> Unit, shareHex: () -> Unit, export: (List<String>, ExportFormat, Boolean, Char) -> Unit, exportWalk:(WalkBook,Boolean)->Unit,exportRange:(String)->Unit,importAnalysis:(Boolean)->Unit,exportAnalysis:()->Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var transportKind by rememberSaveable { mutableStateOf(TransportKind.BLUETOOTH) }
     var showOther by rememberSaveable { mutableStateOf(false) }
@@ -220,6 +243,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
             }
         }) { padding ->
         SensorEditDialog(state,c)
+        AnalysisDialog(state,c,importAnalysis,exportAnalysis,{c.chooseMode(ConnectionMode.LISTEN);c.showAnalysis(false);tab=0})
         Column(Modifier.fillMaxSize().padding(padding)) {
             if(state.rangeVisible) {
                 Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){RangeScreen(state,c,exportRange)}
@@ -245,8 +269,8 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                 }
                 when (tab) {
                     0 -> {
-                        Text("Подключение для: ${if(state.requestedMode==ConnectionMode.WALK) "обхода датчиков" else "мониторинга"}")
-                        if(!state.active) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { ConnectionMode.entries.forEach { mode -> FilterChip(state.requestedMode==mode,{c.chooseMode(mode)},label={Text(if(mode==ConnectionMode.WALK) "Обход датчиков" else "Мониторинг")}) } }
+                        Text("Подключение для: ${state.requestedMode.label}")
+                        if(!state.active) FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { ConnectionMode.entries.forEach { mode -> FilterChip(state.requestedMode==mode,{c.chooseMode(mode)},label={Text(mode.label)}) } }
                         TextButton(onClick=c::showRangeHistory){Text("История настройки диапазона")}
                         if(!state.active)Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             FilterChip(transportKind==TransportKind.BLUETOOTH,{transportKind=TransportKind.BLUETOOTH},label={Text("VIATOR Bluetooth")})
@@ -286,6 +310,7 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
                     2 -> JournalScreen(state, c, archiveId, { archiveId = it }, export)
                     3 -> {
                         Text("Технический обмен и события сессии", style = MaterialTheme.typography.titleLarge)
+                        Button(onClick={c.showAnalysis()},modifier=Modifier.testTag("openHartAnalysis")){Text("Прослушивание HART / импорт HEX")}
                         Text("Полный временный журнал до 16 МиБ. В списке — последние события. Копия содержит адрес коммуникатора, USB-дескрипторы и HART ID.")
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             Switch(state.detailedDiagnostics, c::detailedDiagnostics)
@@ -306,8 +331,8 @@ private fun HartApp(state: SessionState, c: SessionController, permission: () ->
         }
     }
     state.pendingConnection?.let { d -> AlertDialog(onDismissRequest = c::cancelConnectionPrompt,
-        title = { Text("Подключить ${d.name}?") }, text = { Text(if(state.requestedMode==ConnectionMode.WALK) "${d.address}\nКоммуникатор будет подключён для обхода. Приборы определяются автоматически; отсутствие щупов означает ожидание следующего датчика. Сохранение ведомости выполняется вручную." else "${d.address}\nБудут открыты ${if(d.kind==TransportKind.USB)"USB-порт" else "Bluetooth-соединение"} и выполнена идентификация датчика. Измерительная сессия запускается отдельно кнопкой «Начать сессию». Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
-        confirmButton = { TextButton(onClick = { confirm(); tab = if(state.requestedMode==ConnectionMode.WALK) 4 else 1 }) { Text("Подключить") } }, dismissButton = { TextButton(onClick = c::cancelConnectionPrompt) { Text("Отмена") } }) }
+        title = { Text("Подключить ${d.name}?") }, text = { Text(if(state.requestedMode==ConnectionMode.LISTEN) "${d.address}\nБудет открыт только приём. Приложение не отправляет HART-запросы. Возможность видеть чужие запросы и ответы требует проверки конкретного оборудования. Не подключайте второй активный master. Для ЭнИ-406 требуется внешний источник питания датчика." else if(state.requestedMode==ConnectionMode.WALK) "${d.address}\nКоммуникатор будет подключён для обхода. Приборы определяются автоматически; отсутствие щупов означает ожидание следующего датчика. Сохранение ведомости выполняется вручную." else "${d.address}\nБудут открыты ${if(d.kind==TransportKind.USB)"USB-порт" else "Bluetooth-соединение"} и выполнена идентификация датчика. Измерительная сессия запускается отдельно кнопкой «Начать сессию». Восстановление к этому коммуникатору в рамках сессии выполняется без повторного подтверждения.") },
+        confirmButton = { TextButton(onClick = { confirm(); tab = when(state.requestedMode){ConnectionMode.WALK->4;ConnectionMode.LISTEN->3;else->1} }) { Text("Подключить") } }, dismissButton = { TextButton(onClick = c::cancelConnectionPrompt) { Text("Отмена") } }) }
     if (decision || endPrompt) AlertDialog(onDismissRequest = { if (!decision) endPrompt = false },
         title = { Text(if (monitor.phase == MonitorPhase.DIFFERENT_DEVICE) "Обнаружен другой прибор" else if (decision) "Связь не восстановлена" else "Завершить сессию?") },
         text = { Text(if (decision) monitor.message else "Сохранить текущий снимок или удалить временную историю? Ранее сохранённые снимки останутся в журнале.") },

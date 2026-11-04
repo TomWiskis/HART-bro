@@ -9,6 +9,7 @@ class HistoryLimitException : IOException("Достигнут предел вр�
 data class SessionInfo(val id: String, val startedAt: Long, val communicator: String, val deviceKey: String,
                        val manufacturer: String, val identityHex: String,
                        val configuration: ConfigurationSnapshot = ConfigurationSnapshot(), val title: String = "", val comment: String = "", val endedAt: Long = startedAt) {
+    val deviceTitle:String get()=runCatching{HartDeviceCatalog.title(DeviceIdentity.parse(hexBytes(identityHex)))}.getOrDefault(manufacturer)
     val durationMillis: Long get() = (endedAt - startedAt).coerceAtLeast(0)
 }
 data class ChartPoint(val time: Long, val measurement: Measurement, val segment: Long)

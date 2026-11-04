@@ -69,7 +69,7 @@ class SessionLifecycle030Test {
             override fun event(at: Instant, text: String) {}
         }
         val engine = MonitoringEngine(backgroundScope, { connection }, sink)
-        engine.start(false); advanceTimeBy(5001); runCurrent()
+        engine.start(false); advanceTimeBy(15701); runCurrent()
         assertEquals(MonitorPhase.ERROR, engine.state.value.phase); assertEquals(0, begins); assertNull(engine.state.value.startedAt)
         assertEquals(0, closes); assertTrue(engine.state.value.transportConnected)
         assertTrue(engine.state.value.message.contains("No initial HART reply")); engine.stop(); assertEquals(1, closes)

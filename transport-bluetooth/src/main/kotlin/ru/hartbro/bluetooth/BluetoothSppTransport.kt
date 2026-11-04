@@ -16,11 +16,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import ru.hartbro.core.HartTransport
+import ru.hartbro.core.HartFragment
 
 /** Native secure RFCOMM/SPP. No BLE, reflection, channel-1 fallback or modem control bytes. */
 class BluetoothSppTransport private constructor(private val socket: BluetoothSocket, private val diagnostic: (String) -> Unit) : HartTransport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val incoming = Channel<ByteArray>(capacity = 64)
+    private val incoming = Channel<HartFragment>(capacity = 64)
     @Volatile private var closed = false
     @Volatile private var disconnected: (() -> Unit)? = null
     override fun onDisconnect(listener: () -> Unit) { disconnected = listener; if (!isOpen) listener() }
@@ -33,7 +34,7 @@ class BluetoothSppTransport private constructor(private val socket: BluetoothSoc
                 while (!closed) {
                     val size = socket.inputStream.read(buffer)
                     if (size < 0) throw IOException("VIATOR закрыл Bluetooth-соединение")
-                    if (size > 0) incoming.send(buffer.copyOf(size))
+                    if (size > 0) incoming.send(HartFragment(buffer.copyOf(size)))
                 }
             } catch (e: Exception) {
                 diagnostic("RX reader завершён; localClosed=$closed; socketConnected=${socket.isConnected}; ${e.javaClass.simpleName}: ${e.message}")
@@ -57,10 +58,11 @@ class BluetoothSppTransport private constructor(private val socket: BluetoothSoc
         }
     }
 
-    override suspend fun receive(): ByteArray = incoming.receive()
+    override suspend fun receive(): ByteArray = incoming.receive().bytes
+    override suspend fun receiveStamped()=incoming.receive()
 
     override fun discardBufferedInput(): List<ByteArray> = buildList {
-        while (true) add(incoming.tryReceive().getOrNull() ?: break)
+        while (true) add(incoming.tryReceive().getOrNull()?.bytes ?: break)
     }
 
     override fun close() {

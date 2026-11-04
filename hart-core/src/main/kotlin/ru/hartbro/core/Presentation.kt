@@ -5,9 +5,7 @@ import java.time.Instant
 /** Freshness is independent of Bluetooth availability and device quality bits. */
 fun measurementFresh(at: Instant?, now: Instant, periodMillis: Long): Boolean = at != null &&
     java.time.Duration.between(at, now).toMillis() in 0..maxOf(15_000, periodMillis * 4)
-fun sensorTitle(identity: DeviceIdentity?): String = identity?.let {
-    listOfNotNull(it.manufacturerName ?: it.manufacturerCode?.let { code -> "Производитель 0x%04X".format(code) }, HartDeviceCatalog.model(it) ?: "Тип 0x%04X".format(it.deviceType)).joinToString(" · ")
-} ?: "HART-датчик"
+fun sensorTitle(identity: DeviceIdentity?): String = identity?.let(HartDeviceCatalog::title) ?: "HART-датчик"
 fun primaryParameter(unit: Int?): String = when(unit) {
     in 1..14, 237 -> "Давление"
     in 32..35 -> "Температура"

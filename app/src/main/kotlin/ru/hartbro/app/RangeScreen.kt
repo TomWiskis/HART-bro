@@ -36,7 +36,7 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
     state.notice?.let{Text(it,color=MaterialTheme.colorScheme.primary)}
     r.snapshot?.let { snapshot ->
         val d=snapshot.identity
-        Text("${d.manufacturerDescription}\nМодель: ${PassportProfiles().find(d)?.model(d) ?: "не определена"}\nDevice Type 0x%04X · Device ID %06X · HART ${d.hartRevision}".format(d.deviceType,d.deviceId))
+        Text("${d.manufacturerDescription}\nМодель: ${HartDeviceCatalog.model(d) ?: "не определена"}\nDevice Type 0x%04X · Device ID %06X · HART ${d.hartRevision}".format(d.deviceType,d.deviceId))
         Text("TAG: ${snapshot.tag ?: "Не указан"}")
         Text("Текущий диапазон: ${snapshot.range.label}",modifier=Modifier.testTag("rangeCurrent"))
         val sensor=snapshot.sensor
@@ -162,6 +162,13 @@ internal fun RangeScreen(state:SessionState,c:SessionController,export:(String)-
                     Text(if(record.succeeded)"✓" else "✕",color=if(record.succeeded)Color(0xFF168047)else MaterialTheme.colorScheme.error,modifier=Modifier.testTag("sensorOutcome-${record.succeeded}"))
                 }
                 if(expanded==record.id) {
+                    Text(record.resultText)
+                    Text("${sensorTitle(record.identity)} · Device ID ${record.identity.deviceId}")
+                    if(record.communicator.isNotBlank())Text("Коммуникатор: ${record.communicator}")
+                    Text("Команда ${record.command}; метод ${record.methodId.ifBlank{record.field.label}}")
+                    record.pvBefore?.let{Text("PV до: ${it.text}")}
+                    record.pvAfter.forEach{Text("PV после: ${it.text}")}
+                    if(record.accuracySource.isNotBlank())Text("Допуск: ${record.tolerance}; разрешение: ${record.resolution}; источник: ${record.accuracySource}")
                     record.actual?.let{Text("Прочитано: $it")}
                     if(record.error.isNotBlank())Text(record.error)
                     record.responseCode?.let{Text("HART: $it · ${HartStatus.responseDescription(it)}")}

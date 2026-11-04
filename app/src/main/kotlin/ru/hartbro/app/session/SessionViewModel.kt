@@ -22,14 +22,16 @@ import ru.hartbro.bluetooth.BluetoothSppTransport
 import ru.hartbro.usb.*
 import ru.hartbro.core.*
 
-enum class ConnectionMode { MONITOR, WALK }
+enum class ConnectionMode(val label:String) { MONITOR("Мониторинг"), WALK("Обход датчиков"), LISTEN("Приём без запросов") }
 enum class TransportKind { BLUETOOTH, USB }
 data class Communicator(val name: String, val address: String, val likelyViator: Boolean,
     val kind: TransportKind = if(address.startsWith("usb:"))TransportKind.USB else TransportKind.BLUETOOTH)
 data class SensorDiagnostics(val identity: DeviceIdentity, val configuration: ConfigurationSnapshot,
     val measurements: MeasurementBatch?, val range: RangeSnapshot? = null, val errors: List<String> = emptyList())
 data class SessionState(
-    val sensorEdit: SensorEdit? = null, val editConfirm: Boolean = false, val editBusy: Boolean = false, val editError: String? = null,
+    val captureActive:Boolean=false,val capture:CaptureState=CaptureState(),val analysisVisible:Boolean=false,
+    val analysis:HartAnalysis?=null,val analysisBaseline:HartAnalysis?=null,val analysisFiles:List<String> = emptyList(),
+    val zeroPreparation:ZeroPreparation?=null, val sensorEdit: SensorEdit? = null, val editConfirm: Boolean = false, val editBusy: Boolean = false, val editError: String? = null,
     val sensorRecords: List<SensorRecord> = emptyList(),
     val communicator: Communicator? = null, val chartViewport: ChartViewport = ChartViewport(),
     val diagnosticVisible: Boolean = false, val diagnosticLoading: Boolean = false,
@@ -47,13 +49,18 @@ data class SessionState(
     val walk: WalkState = WalkState(), val savedWalks: List<WalkBook> = emptyList(), val walkDraftAvailable: Boolean = false,
 )
 
-class SessionController(private val app: Application, private val connectionFactory: (suspend (String) -> MonitorConnection)? = null) {
+class SessionController(private val app: Application, private val captureFactory:(suspend(String)->HartTransport)?=null, private val connectionFactory: (suspend (String) -> MonitorConnection)? = null) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow(SessionState())
     val state = mutableState.asStateFlow()
     val history = SessionHistory(java.io.File(app.filesDir, "active-session"), java.io.File(app.filesDir, "sessions"))
     private val journal = DiagnosticJournal(File(app.filesDir, "diagnostics/current.txt"))
     private val archiveActions = Mutex()
+    private var captureEngine:PassiveCaptureEngine?=null
+    private var captureObserver:Job?=null
+    private var captureLogFile:File?=null
+    private var analysisRawFile:File?=null
+    private val analysisDirectory=File(app.filesDir,"hart-analyses")
     private var engine: MonitoringEngine? = null
     private var observer: Job? = null
     private var promptShown = false
@@ -146,6 +153,7 @@ class SessionController(private val app: Application, private val connectionFact
     fun cancelConnectionPrompt() { mutableState.update { it.copy(pendingConnection = null) } }
     fun confirmConnection() {
         val selected = state.value.pendingConnection ?: return
+        val mode=state.value.requestedMode
         mutableState.update{it.copy(pendingConnection=null,connectionRequestPending=true)}
         scope.launch {
         try {
@@ -153,7 +161,7 @@ class SessionController(private val app: Application, private val connectionFact
                 mutableState.update{it.copy(usbPermissionPending=true)}
                 usbHost.authorizeSelection()
             }
-            app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", selected.address).putExtra("name", selected.name).putExtra("mode", state.value.requestedMode.name))
+            app.startForegroundService(Intent(app, MonitoringService::class.java).putExtra("address", selected.address).putExtra("name", selected.name).putExtra("mode", mode.name))
             withTimeoutOrNull(5000){state.first{it.active}}
         } catch (e: Exception) {
             val message = "Не удалось запустить подключение: ${e.javaClass.simpleName}: ${e.message}"
@@ -165,7 +173,7 @@ class SessionController(private val app: Application, private val connectionFact
     fun start(address:String,name:String) { scope.launch { archiveActions.withLock { startMonitoringNow(address,name) } } }
     @SuppressLint("MissingPermission")
     private fun startMonitoringNow(address: String, name: String, initial: MonitorConnection? = null) {
-        if (rangeLeaseActive || engine != null || walkEngine != null) { initial?.close();return }
+        if (state.value.captureActive || rangeLeaseActive || engine != null || walkEngine != null) { initial?.close();return }
         communicator = Communicator(name,address,true)
         initial?.prepareMonitoring()
         mutableState.update { it.copy(active = true, notice = null, communicator = communicator, sensorDiagnostics = null) }
@@ -205,8 +213,7 @@ class SessionController(private val app: Application, private val connectionFact
         newEngine.start(automaticSession = false)
     }
     @SuppressLint("MissingPermission")
-    private suspend fun createConnection(address: String): MonitorConnection {
-        connectionFactory?.let { return it(address) }
+    private suspend fun openTransport(address:String):HartTransport {
         val isUsb=communicator?.kind==TransportKind.USB
         val transport:HartTransport = if(isUsb) {
             socketState="USB: открытие"
@@ -224,26 +231,35 @@ class SessionController(private val app: Application, private val connectionFact
                 mutableState.update{state->state.copy(communicator=communicator)}
             }
         }
+        return transport
+    }
+    @SuppressLint("MissingPermission")
+    private suspend fun createConnection(address: String): MonitorConnection {
+        connectionFactory?.let { return it(address) }
+        val isUsb=communicator?.kind==TransportKind.USB
+        val transport=openTransport(address)
         return object : MonitorConnection {
             private lateinit var identity: DeviceIdentity
+            private val timeouts=HartTimeoutPolicy()
             private val qualification=UsbReadQualification()
             private fun observe(metric:HartTransactionMetric) {
                 append(DiagnosticEntry(Instant.now(),"PERF","command=${metric.command}; attempt=${metric.attempt}; durationMs=${metric.millis}; outcome=${metric.outcome}"))
                 qualification.observe(metric)
             }
-            private fun newClient(timeout:Long=2500)=HartClient(transport,::append,timeoutMillis=timeout,readAttempts=1,
-                detailed={state.value.detailedDiagnostics},observed=::observe,
+            private fun newClient(timeout:Long=timeouts.ordinaryRead,idTimeout:Long=timeouts.initialIdentification)=HartClient(transport,::append,timeoutMillis=timeout,readAttempts=1,
+                detailed={state.value.detailedDiagnostics},observed=::observe,identificationTimeoutMillis=idTimeout,
                 beforeWrite={if(isUsb)qualification.requireWriteAllowed(transport.isOpen)})
             private var client = newClient()
             private var passportReader = PassportReader(client, report = ::event)
             override suspend fun identify() = client.identify().first.also {
                 qualification.identified(it);identity = it
             }
+            override suspend fun identifyForRecovery()=client.identify(timeouts.recoveryIdentification).first.also{qualification.identified(it);identity=it}
             override val isOpen get() = transport.isOpen
             override fun onDisconnect(listener: () -> Unit) = transport.onDisconnect(listener)
             override fun prepareWalk() {
                 reader=null;readerClient=null
-                client=newClient(1500)
+                client=newClient(timeouts.ordinaryRead,timeouts.walkDiscovery)
                 passportReader=PassportReader(client, report=::event)
             }
             override fun prepareMonitoring() { reader=null;readerClient=null;client=newClient() }
@@ -254,6 +270,7 @@ class SessionController(private val app: Application, private val connectionFact
             override suspend fun applyRange(prepared:RangeSnapshot,requested:ConfiguredRange,beforeSend:(ByteArray)->Unit,onReply:(HartExchange)->Unit,onInvalidRx:(ByteArray)->Unit)=RangeOperations(client).apply(prepared,requested,beforeSend,onReply,onInvalidRx)
             override suspend fun verifyRange(expected:DeviceIdentity)=RangeOperations(client).verify(expected).also{identity=it.identity}
             override suspend fun configuration() = readConfiguration(client,identity,::event)
+            override suspend fun prepareZero(identity:DeviceIdentity)=SensorOperations(client).prepareZero(identity)
             override suspend fun editSensor(edit: SensorEdit, journal: SensorJournal) = SensorOperations(client).apply(edit,journal)
             override suspend fun discover(): MeasurementBatch {
                 reader=MeasurementReader(client,identity,::event);readerClient=client;return reader!!.discover()
@@ -275,14 +292,30 @@ class SessionController(private val app: Application, private val connectionFact
     fun chartViewport(value: ChartViewport) { mutableState.update { it.copy(chartViewport = value) } }
     fun openSensorEdit(field: SensorField) {
         val s=state.value
-        if(s.editBusy || s.rangeOwned || s.walkActive || s.diagnosticLoading) { notice("Дождитесь завершения текущей операции");return }
+        if(s.editBusy || s.rangeOwned || s.walkActive || s.captureActive || s.diagnosticLoading) { notice("Дождитесь завершения текущей операции");return }
         val identity=s.monitor.identity ?: return
         val config=s.sensorDiagnostics?.takeIf { passportKey(it.identity)==passportKey(identity) }?.configuration ?: s.monitor.configuration
-        if(field==SensorField.ZERO && ZeroProfiles().find(identity)==null) { notice("Поддержка установки нуля для этой модели и ревизии пока не подтверждена. Команда не отправлена");return }
         val original=when(field) { SensorField.TAG->config.parameters["tag"]?.value.orEmpty();SensorField.LONG_TAG->config.parameters["longTag"]?.value.orEmpty();SensorField.DATE->config.productionDate?.let(HartDate::format).orEmpty();SensorField.ZERO->"" }
-        mutableState.update { it.copy(sensorEdit=SensorEdit(identity,field,original,original),editConfirm=field==SensorField.ZERO,editError=null) }
+        mutableState.update { it.copy(sensorEdit=SensorEdit(identity,field,original,original,communicator=s.communicator?.let{"${it.name} · ${it.kind} · ${it.address}"}.orEmpty()),zeroPreparation=null,editConfirm=false,editError=null) }
     }
-    fun closeSensorEdit() { if(!state.value.editBusy)mutableState.update { it.copy(sensorEdit=null,editConfirm=false,editError=null) } }
+    fun closeSensorEdit() { if(!state.value.editBusy)mutableState.update { it.copy(sensorEdit=null,zeroPreparation=null,editConfirm=false,editError=null) } }
+    fun prepareZeroEdit(options:ZeroOptions) {
+        val edit=state.value.sensorEdit?.takeIf{it.field==SensorField.ZERO} ?: return
+        if(state.value.editBusy)return
+        mutableState.update{it.copy(editBusy=true,editError=null)}
+        scope.launch {archiveActions.withLock {
+            var conn:MonitorConnection?=null;var acquired=false
+            try {
+                check(options.conditionsConfirmed && options.pressureConfirmed){"Подтвердите условия и тип прибора"}
+                val owner=engine ?: error("Нет подключения")
+                conn=owner.acquireConfiguration();acquired=true;check(conn?.isOpen==true){"Транспорт отключён"}
+                val prep=conn!!.prepareZero(edit.identity)
+                mutableState.update{it.copy(sensorEdit=edit.copy(original=prep.before?.text.orEmpty(),zero=options.copy(unitCode=prep.unitCode)),zeroPreparation=prep,editConfirm=true)}
+            }catch(e:CancellationException){throw e}catch(e:Exception){mutableState.update{it.copy(editError=e.message,editConfirm=false)}}
+            finally {if(acquired)runCatching{engine?.releaseConfiguration(conn,null,true,"Предварительное чтение PV завершено",false)};mutableState.update{it.copy(editBusy=false)}}
+        }}
+    }
+    fun sensorEditError(message:String){mutableState.update{it.copy(editError=message)}}
     fun prepareSensorEdit(value: String) {
         val edit=state.value.sensorEdit ?: return
         runCatching {
@@ -294,6 +327,7 @@ class SessionController(private val app: Application, private val connectionFact
     @Synchronized fun confirmSensorEdit() {
         val s=state.value;val edit=s.sensorEdit ?: return
         if(s.editBusy || !s.editConfirm)return
+        if(edit.field==SensorField.ZERO && (s.zeroPreparation==null || !edit.zero.conditionsConfirmed || !edit.zero.pressureConfirmed))return
         mutableState.update { it.copy(editBusy=true,editError=null) }
         scope.launch { archiveActions.withLock {
             var conn:MonitorConnection?=null;var acquired=false;var verification:RangeVerification?=null;var different=false;var resume=true
@@ -302,14 +336,14 @@ class SessionController(private val app: Application, private val connectionFact
                 val owner=engine ?: error("Нет подключения")
                 check(owner.state.value.identity?.let(::passportKey)==passportKey(edit.identity)) { "Датчик заменён. Откройте редактор заново" }
                 conn=owner.acquireConfiguration();acquired=true
-                check(conn?.isOpen==true) { "Bluetooth отключён. Дождитесь восстановления соединения" }
+                check(conn?.isOpen==true) { "Транспорт отключён. Дождитесь восстановления соединения" }
                 val result=conn!!.editSensor(edit,sensorJournal)
                 different=result.identity?.let { passportKey(it)!=passportKey(edit.identity) } ?: false
-                resume=!different && result.identity!=null && (result.configuration!=null || result.record.succeeded)
+                resume=!different && result.identity!=null && (result.configuration!=null || result.record.succeeded || result.record.outcome==SensorOutcome.ACCEPTED_UNVERIFIED)
                 val updated=owner.state.value.configuration.copy(parameters=owner.state.value.configuration.parameters+result.configuration?.parameters.orEmpty(),
                     responses=owner.state.value.configuration.responses.filterNot { old->result.configuration?.responses?.any{it.command==old.command}==true }+result.configuration?.responses.orEmpty())
                 if(result.configuration!=null && updated.range!=null)verification=RangeVerification(edit.identity,updated)
-                mutableState.update { it.copy(sensorDiagnostics=it.sensorDiagnostics?.copy(configuration=updated),notice=if(result.record.succeeded) "${edit.field.label}: подтверждено чтением" else "Результат не подтверждён: ${result.record.error}",sensorEdit=null,editConfirm=false) }
+                mutableState.update { it.copy(sensorDiagnostics=it.sensorDiagnostics?.copy(configuration=updated),notice=if(edit.field==SensorField.ZERO)result.record.resultText+(result.record.error.takeIf{it.isNotBlank()}?.let{". $it"} ?: "") else if(result.record.succeeded) "${edit.field.label}: подтверждено чтением" else "Результат не подтверждён: ${result.record.error}",sensorEdit=null,editConfirm=false) }
             } catch(e:CancellationException) { throw e }
             catch(e:Exception) { if(e is RangeDeviceChanged){different=true;resume=false};mutableState.update { it.copy(editError=e.message ?: "Операция не выполнена",editConfirm=false) } }
             finally {
@@ -398,7 +432,7 @@ class SessionController(private val app: Application, private val connectionFact
     }
     fun disconnect() { scope.launch { archiveActions.withLock {
         if (rangeLeaseActive || state.value.walkActive || state.value.monitor.startedAt != null) { notice("Сначала сохраните или завершите сессию / обход"); return@withLock }
-        disconnectNow()
+        if(state.value.captureActive || captureEngine!=null)stopCaptureNow() else disconnectNow()
     } } }
     private suspend fun disconnectNow() {
         engine?.stop("Явное отключение / завершение службы"); observer?.cancelAndJoin(); observer = null; engine = null; readerClient = null
@@ -414,6 +448,7 @@ class SessionController(private val app: Application, private val connectionFact
             rangeToken="";refreshRangeRecords()
             mutableState.update{it.copy(rangeOwned=false,range=rangeEngine?.state?.value ?: RangeState())}
         }
+        if(captureEngine!=null){stopCaptureNow();return@withLock}
         if (state.value.walkActive) {
             walkEngine?.stop();walkObserver?.cancelAndJoin();walkObserver=null;walkEngine=null
             mutableState.update { it.copy(active=false,walkActive=false,walkDraftAvailable=walkStore.hasDraft(),walk=it.walk.copy(phase=WalkPhase.INTERRUPTED,transportConnected=false,recovery=null,message="Служба остановлена. Ведомость сохранена в черновике; продолжение — по вашему решению.")) }
@@ -471,16 +506,18 @@ class SessionController(private val app: Application, private val connectionFact
         finally {rangeLeaseActive=false;mutableState.update{it.copy(rangeOwned=false)}}
     }
     fun closeRange(){
+        val target=rangeEngine;val token=rangeToken
         mutableState.update{it.copy(rangeVisible=false)}
-        if(rangeEngine?.state?.value?.busy==true && rangeEngine?.cancelBeforeSend()!=true)return // Sent operations continue verification.
+        if(target?.state?.value?.busy==true && target.cancelBeforeSend()!=true)return
         scope.launch {archiveActions.withLock {
-            if(rangeLeaseActive) {
-                val r=rangeEngine?.state?.value
-                rangeEngine?.stop(closeConnection=false)
+            // An older close must not close a newly opened configuration lease.
+            if(rangeLeaseActive && rangeToken==token && rangeEngine===target) {
+                val r=target?.state?.value
+                target?.stop(closeConnection=false)
                 val verification=r?.verification ?: r?.snapshot?.let{RangeVerification(it.identity,it.configuration)}
-                releaseRangeLease(verification,rangeEngine?.connection,r?.otherDevice==null && r?.record?.outcome !in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE),"Возврат от настройки диапазона без повторной записи")
+                releaseRangeLease(verification,target?.connection,r?.otherDevice==null && r?.record?.outcome !in setOf(RangeOutcome.UNKNOWN,RangeOutcome.DIFFERENT_DEVICE),"Возврат от настройки диапазона без повторной записи")
             }
-            if(state.value.diagnosticVisible) openSensorDiagnostics()
+            if(rangeToken==token && state.value.diagnosticVisible)openSensorDiagnostics()
         }}
     }
     fun selectRange(lower:String,upper:String,unitCode:Int=state.value.range.snapshot?.range?.unitCode ?: -1){rangeEngine?.select(lower,upper,unitCode)}
@@ -489,7 +526,54 @@ class SessionController(private val app: Application, private val connectionFact
     fun moreRangeRecords(){rangeRecordLimit+=100;refreshRangeRecords()}
     fun refreshRangeRecords(){scope.launch{runCatching{rangeJournal.list(rangeRecordLimit) to sensorJournal.list(rangeRecordLimit)}.onSuccess{(records,sensor)->mutableState.update{it.copy(rangeRecords=records,sensorRecords=sensor)}}.onFailure{notice("Журнал записей: ${it.message}")}}}
     fun writeRangeReport(id:String,output:OutputStream){val record=rangeEngine?.state?.value?.record?.takeIf{it.id==id} ?: rangeJournal.load(id);output.write(record.text().toByteArray(Charsets.UTF_8))}
-    fun chooseMode(mode: ConnectionMode) { mutableState.update { it.copy(requestedMode=mode) } }
+    fun showAnalysis(visible:Boolean=true){mutableState.update{it.copy(analysisVisible=visible,analysisFiles=analysisDirectory.listFiles()?.filter{f->f.extension=="txt"}?.sortedByDescending{f->f.lastModified()}?.map{f->f.name}.orEmpty())}}
+    fun importAnalysis(text:String,baseline:Boolean=false,source:String="Внешний HEX") {scope.launch {
+        try {
+            check(baseline || !state.value.captureActive){"Остановите приём перед открытием другого журнала"}
+            val analysis=HartLogImport.parse(text,source)
+            if(!baseline) {
+                analysisDirectory.mkdirs();val file=File(analysisDirectory,"${java.util.UUID.randomUUID()}.txt");file.writeText(text);analysisRawFile=file
+            }
+            mutableState.update{if(baseline)it.copy(analysisBaseline=analysis,analysisVisible=true)else it.copy(analysis=analysis,analysisVisible=true)};showAnalysis()
+        }catch(e:Exception){notice("Импорт HEX: ${e.message}")}
+    }}
+    fun openAnalysisFile(name:String){scope.launch {
+        try {require(name.matches(Regex("[0-9a-f-]{36}\\.txt")));val file=File(analysisDirectory,name);require(file.length()<=HartLogImport.MAX_BYTES)
+            val analysis=HartLogImport.parse(file.readText(),name);check(!state.value.captureActive){"Сначала остановите приём"}
+            analysisRawFile=file;mutableState.update{it.copy(analysis=analysis,analysisVisible=true)}
+        }catch(e:Exception){notice("Открытие анализа: ${e.message}")}
+    }}
+    private fun analysisText():String = if(analysisRawFile!=null) {
+        captureEngine?.takeIf{analysisRawFile==captureLogFile}?.snapshotText() ?: analysisRawFile!!.readText()
+    } else state.value.analysis?.text() ?: "HART-бро: кадры не получены\n"
+    fun writeAnalysis(output:OutputStream){output.write(analysisText().toByteArray())}
+    fun saveAnalysisSnapshot(){scope.launch {
+        try {analysisDirectory.mkdirs();val file=File(analysisDirectory,"${java.util.UUID.randomUUID()}.txt");file.writeText(analysisText());notice("Сценарий сохранён: ${file.name}");showAnalysis()}
+        catch(e:Exception){notice("Сохранение анализа: ${e.message}")}
+    }}
+    fun startPassiveConnection(address:String,name:String){scope.launch{archiveActions.withLock{
+        if(engine!=null || walkEngine!=null || rangeLeaseActive || captureEngine!=null)return@withLock
+        communicator=Communicator(name,address,false)
+        val file=File(app.filesDir,"hart-capture-live/${java.util.UUID.randomUUID()}.txt");captureLogFile=file;analysisRawFile=file
+        mutableState.update{it.copy(active=true,captureActive=true,communicator=communicator,requestedMode=ConnectionMode.LISTEN,analysisVisible=true,monitor=MonitorState(),notice=null)}
+        val worker=PassiveCaptureEngine(scope,{captureFactory?.invoke(address) ?: openTransport(address)},file,::append)
+        captureEngine=worker
+        captureObserver=scope.launch{worker.state.collect{capture->
+            mutableState.update{it.copy(capture=capture,analysis=HartAnalysis("Приём ${communicator?.name}",capture.records,
+                listOf("Экран: последние 2000 событий; экспорт/сохранение содержат весь файл до 16 МиБ. Видимость чужих запросов и ответов проверяется отдельно на оборудовании.")))}
+            if(capture.phase==CapturePhase.ERROR){notice("Приём остановлен: ${capture.error}");app.stopService(Intent(app,MonitoringService::class.java))}
+        }}
+        event("Начат приём без собственных запросов. HART TX запрещена; аппаратная возможность полного пассивного приёма не подтверждена")
+        worker.start()
+    }}}
+    fun stopCapture(){scope.launch{archiveActions.withLock{stopCaptureNow()}}}
+    private suspend fun stopCaptureNow(){
+        captureEngine?.stop();captureObserver?.cancelAndJoin();captureObserver=null;captureEngine=null
+        val analysis=captureLogFile?.takeIf{it.exists()}?.let{runCatching{HartLogImport.parse(it.readText(),it.name)}.getOrNull()}
+        mutableState.update{it.copy(active=false,captureActive=false,capture=it.capture.copy(phase=CapturePhase.STOPPED,transportConnected=false),analysis=analysis ?: it.analysis)}
+        app.stopService(Intent(app,MonitoringService::class.java));event("Приём завершён. Собственные HART-запросы не отправлялись")
+    }
+    fun chooseMode(mode: ConnectionMode) { if(!state.value.active)mutableState.update { it.copy(requestedMode=mode) } }
     fun requestWalk(saveSession: Boolean? = null) { scope.launch { archiveActions.withLock {
         if (rangeLeaseActive) { notice("Настройка диапазона ещё не завершена");return@withLock }
         if (state.value.walkActive) return@withLock
@@ -508,7 +592,7 @@ class SessionController(private val app: Application, private val connectionFact
         startWalkNow(selected,initial)
     } } }
     fun startWalkConnection(address:String,name:String) { scope.launch { archiveActions.withLock {
-        if (rangeLeaseActive || engine!=null || walkEngine!=null) return@withLock
+        if (state.value.captureActive || captureEngine!=null || rangeLeaseActive || engine!=null || walkEngine!=null) return@withLock
         if(state.value.walkDraftAvailable && state.value.walk.book==null) { notice("Сначала восстановите или удалите черновик на вкладке «Обход»");app.stopService(Intent(app,MonitoringService::class.java));return@withLock }
         if (walkCatalog.snapshot().endedAt != null) walkCatalog=WalkCatalog()
         startWalkNow(Communicator(name,address,true))

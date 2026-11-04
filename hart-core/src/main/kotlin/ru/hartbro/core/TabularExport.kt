@@ -48,7 +48,7 @@ fun deviceRegister(infos: List<SessionInfo>): List<DeviceRegisterRow> = infos.gr
     val type = info.configuration.parameters["deviceType"]?.value ?: info.deviceKey.substringBefore('-')
     DeviceRegisterRow(records.mapNotNull { it.configuration.tag }.distinct().joinToString(" / ").ifEmpty { null },
         factorySerial = null, manufacturedOn = null,
-        model = "${info.manufacturer}; тип HART 0x$type",
+        model = runCatching { HartDeviceCatalog.title(DeviceIdentity.parse(hexBytes(info.identityHex))) }.getOrDefault("${info.manufacturer}; тип HART 0x$type"),
         configuredRange = records.mapNotNull { it.configuration.range?.label }.distinct().joinToString(" / ").ifEmpty { null },
         hartDeviceId = info.deviceKey)
 }

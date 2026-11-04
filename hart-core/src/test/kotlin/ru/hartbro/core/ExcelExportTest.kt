@@ -65,7 +65,7 @@ class ExcelExportTest {
         val bytes = ByteArrayOutputStream().also { SessionXlsx.write(data.history, data.id, it) }.toByteArray();val parts = archive(bytes)
         val sheet = cells(parts.getValue("xl/worksheets/sheet1.xml"))
         assertEquals("Нет данных", sheet.getValue("B6").value());assertEquals("Нет данных", sheet.getValue("C6").value())
-        assertEquals("2662-BF2C34", sheet.getValue("F6").value());assertTrue(sheet.getValue("D6").value().contains("Rosemount"))
+        assertEquals("2662-BF2C34", sheet.getValue("F6").value());assertTrue(sheet.getValue("D6").value().contains("Метран-150R"));assertTrue(data.history.info(data.id).manufacturer.contains("Rosemount"))
         assertEquals("0…10 кПа", sheet.getValue("E6").value())
         assertEquals("16 06 7A", data.history.info(data.id).configuration.parameters.getValue("deviceDateRaw").value)
         val register = deviceRegister(listOf(data.history.info(data.id))).single();assertNull(register.factorySerial);assertNull(register.manufacturedOn)

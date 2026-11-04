@@ -100,7 +100,7 @@ class SensorOperations053Test {
         try { SensorOperations(HartClient(wire,timeoutMillis=40)).apply(SensorEdit(wire.identity.copy(deviceId=12),SensorField.LONG_TAG,"LONG-OLD","NEW"),journal());fail() }catch(_:RangeDeviceChanged){}
         assertFalse(wire.commands.any{it in setOf(18,22,35,43)})
     }
-    @Test fun unknownZeroCapabilityIsNotProbedWithAWrite() = runTest {
+    @Test fun zeroWithoutExplicitConditionsConfirmationIsNotSent() = runTest {
         val wire=SensorWire()
         try { SensorOperations(HartClient(wire,timeoutMillis=40)).apply(SensorEdit(wire.identity,SensorField.ZERO,"","0"),journal());fail() }catch(_:IllegalArgumentException){}
         assertFalse(wire.commands.contains(43));assertFalse(wire.commands.contains(35))
@@ -108,12 +108,12 @@ class SensorOperations053Test {
     private fun documented(wire:SensorWire)=ZeroProfiles(listOf(ZeroProfile(wire.identity.manufacturerCode!!,wire.identity.deviceType,setOf(wire.identity.hartRevision),setOf(wire.identity.deviceRevision),"Test fixture documented command 43")))
     @Test fun supportedPressureZeroWritesOnceAndChecksThreeRealPvReadings() = runTest {
         val wire=SensorWire()
-        val result=SensorOperations(HartClient(wire,timeoutMillis=40,readAttempts=3),documented(wire)).apply(SensorEdit(wire.identity,SensorField.ZERO,"","0"),journal())
+        val result=SensorOperations(HartClient(wire,timeoutMillis=40,readAttempts=3),documented(wire)).apply(SensorEdit(wire.identity,SensorField.ZERO,"","0",ZeroOptions(conditionsConfirmed=true,pressureConfirmed=true,tolerance=.001f,accuracySource="Test fixture",unitCode=12)),journal())
         assertTrue(result.record.succeeded);assertEquals(1,wire.commands.count{it==43});assertEquals(4,wire.commands.count{it==1});assertFalse(wire.commands.contains(35))
     }
     @Test fun zeroAckWithoutZeroPvIsFailure() = runTest {
         val wire=SensorWire().also{it.zeroWorks=false}
-        val result=SensorOperations(HartClient(wire,timeoutMillis=40),documented(wire)).apply(SensorEdit(wire.identity,SensorField.ZERO,"","0"),journal())
+        val result=SensorOperations(HartClient(wire,timeoutMillis=40),documented(wire)).apply(SensorEdit(wire.identity,SensorField.ZERO,"","0",ZeroOptions(conditionsConfirmed=true,pressureConfirmed=true,tolerance=.001f,accuracySource="Test fixture",unitCode=12)),journal())
         assertFalse(result.record.succeeded);assertEquals(1,wire.commands.count{it==43})
     }
     @Test fun interruptedSensorJournalNeverRestartsWritesAndIndividualDeletionPreservesOthers() {

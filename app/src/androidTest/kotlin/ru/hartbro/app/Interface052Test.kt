@@ -26,7 +26,7 @@ class Interface052Test {
     private val c get()=app.controller
     private val device get()=UiDevice.getInstance(instrumentation)
     private var font="1.0"
-    private fun waitFor(test:()->Boolean){val end=SystemClock.elapsedRealtime()+25000;while(!test() && SystemClock.elapsedRealtime()<end)SystemClock.sleep(100);assertTrue(c.state.value.toString(),test())}
+    private fun waitFor(test:()->Boolean){val end=SystemClock.elapsedRealtime()+25000;while(!test() && SystemClock.elapsedRealtime()<end)SystemClock.sleep(100);assertTrue("phase=${c.state.value.monitor.phase}; range=${c.state.value.range}; owned=${c.state.value.rangeOwned}; records=${c.state.value.rangeRecords.map{it.id to it.outcome}}; notice=${c.state.value.notice}",test())}
     @Before fun reset(){
         font=device.executeShellCommand("settings get system font_scale").trim()
         device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");app.stopRegressionOwners()

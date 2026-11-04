@@ -32,6 +32,9 @@ class FieldRegressionApplication : HartApplication() {
     val sensorWrites=AtomicInteger()
     @Volatile var sensorMode=false
     @Volatile var viatranProfile=false
+    @Volatile var metran150RProfile=false
+    val captureWrites=AtomicInteger();val captureOpens=AtomicInteger()
+    val captureInput=kotlinx.coroutines.channels.Channel<HartFragment>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     @Volatile var sensorPv=.25f
     @Volatile var sensorLongTag="TEST-TAG"
     @Volatile var sensorTagDate=byteArrayOf(4,32,0xE0.toByte(),0x82.toByte(),8,32)+ByteArray(12){0x82.toByte()}+byteArrayOf(1,2,126)
@@ -44,7 +47,19 @@ class FieldRegressionApplication : HartApplication() {
     @Volatile var identifyDelay = 0L
     @Volatile var failIdentity = false
     @Volatile var closeRfcomm: (() -> Unit)? = null
-    override fun createController() = SessionController(this) {
+    override fun createController() = SessionController(this,captureFactory={
+        captureOpens.incrementAndGet()
+        object:HartTransport {
+            private var open=true;private var disconnected:(()->Unit)?=null
+            override val isOpen get()=open
+            override fun onDisconnect(listener:()->Unit){disconnected=listener}
+            override suspend fun write(bytes:ByteArray){captureWrites.incrementAndGet()}
+            override suspend fun receive()=captureInput.receive().bytes
+            override suspend fun receiveStamped()=captureInput.receive()
+            override fun discardBufferedInput()=emptyList<ByteArray>()
+            override fun close(){if(open){open=false;disconnected?.invoke()}}
+        }
+    }) {
         connections.incrementAndGet()
         object : MonitorConnection {
             private var open = true
@@ -54,6 +69,7 @@ class FieldRegressionApplication : HartApplication() {
             private val rangeWire=RangeTransportFixture(this@FieldRegressionApplication)
             private val sensorClient by lazy{HartClient(rangeWire,controller::append,timeoutMillis=rangeTimeout,readAttempts=1)}
             private val rangeOperations by lazy{RangeOperations(sensorClient)}
+            override suspend fun prepareZero(identity:DeviceIdentity)=SensorOperations(sensorClient).prepareZero(identity)
             override suspend fun editSensor(edit:SensorEdit,journal:SensorJournal)=SensorOperations(sensorClient).apply(edit,journal)
             override val isOpen get() = open && rangeWire.open
             override suspend fun rangeSnapshot()=rangeOperations.prepare()
@@ -66,6 +82,7 @@ class FieldRegressionApplication : HartApplication() {
                 val raw="FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(" ").map { it.toInt(16).toByte() }.toByteArray()
                 raw[9]=(hartDeviceId shr 16).toByte();raw[10]=(hartDeviceId shr 8).toByte();raw[11]=hartDeviceId.toByte()
                 if(viatranProfile){raw[1]=0x32;raw[2]=1;raw[4]=5;raw[5]=2}
+                if(metran150RProfile){raw[1]=0x26;raw[2]=0x62;raw[4]=5;raw[5]=9}
                 return DeviceIdentity.parse(raw)
             }
             override suspend fun passport(identity:DeviceIdentity):PassportReading {

@@ -12,9 +12,11 @@ import kotlinx.coroutines.sync.withLock
 
 interface MonitorConnection : AutoCloseable {
     suspend fun identify(): DeviceIdentity
+    suspend fun identifyForRecovery():DeviceIdentity = identify()
     suspend fun discover(): MeasurementBatch
     suspend fun sample(): MeasurementBatch
     suspend fun configuration(): ConfigurationSnapshot = ConfigurationSnapshot()
+    suspend fun prepareZero(identity:DeviceIdentity):ZeroPreparation = throw UnsupportedOperationException("Предварительное чтение PV недоступно")
     suspend fun editSensor(edit: SensorEdit, journal: SensorJournal): SensorEditResult = throw UnsupportedOperationException("Запись параметров недоступна")
     suspend fun passport(identity: DeviceIdentity): PassportReading = PassportReading(identity, emptyMap(), emptyMap(), null, java.time.Instant.now(), mapOf("connection" to "Паспортное чтение недоступно"))
     suspend fun rangeSnapshot():RangeSnapshot = throw UnsupportedOperationException("Настройка диапазона недоступна")
@@ -56,6 +58,7 @@ class MonitoringEngine(
     private val sink: SessionSink, private val wallTime: () -> Instant = Instant::now,
     private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     private val transportLossReason: LossReason = LossReason.BLUETOOTH,
+    private val initialIdentityAttempts:Int = 3, private val initialRetryPause:Long = 350,
 ) {
     private val mutableState = MutableStateFlow(MonitorState())
     val state = mutableState.asStateFlow()
@@ -89,7 +92,7 @@ class MonitoringEngine(
                 var (identity,config)=ioGate.withLock {
                     if (connection?.isOpen != true) { closeConnection(); connection = openConnection() }
                     publish(MonitorPhase.CONNECTING, "Коммуникатор подключён. Идентификация HART…")
-                    connection!!.identify() to connection!!.configuration()
+                    initialIdentity() to connection!!.configuration()
                 }
                 mutableState.update { it.copy(identity = identity, configuration = config, lastHartSuccess = wallTime(), identificationResponding = true) }
                 if (!automaticSession) {
@@ -170,6 +173,20 @@ class MonitoringEngine(
         }
         job!!.start()
     }
+    private suspend fun initialIdentity():DeviceIdentity {
+        require(initialIdentityAttempts in 1..3 && initialRetryPause in 100..500)
+        for(attempt in 1..initialIdentityAttempts) {
+            try {return connection!!.identify()}
+            catch(e:CancellationException){throw e}
+            catch(e:Exception){
+                sink.event(wallTime(),"INITIAL IDENTIFICATION $attempt/$initialIdentityAttempts: ${e.message}")
+                if(e is IOException || connection?.isOpen!=true || attempt==initialIdentityAttempts)throw e
+                publish(MonitorPhase.CONNECTING,"HART: ${e.message}. Повтор идентификации ${attempt+1}/$initialIdentityAttempts…")
+                delay(initialRetryPause)
+            }
+        }
+        error("unreachable")
+    }
     suspend fun retryIdentification() {
         val failedJob = synchronized(controls) {
             if (state.value.phase != MonitorPhase.ERROR || state.value.startedAt != null || configuring) return
@@ -240,7 +257,7 @@ class MonitoringEngine(
                             progress(attempt, "Подключение / идентификация")
                             sink.event(wallTime(), "Попытка восстановления $attempt")
                             if (connection?.isOpen != true) { closeConnection(); connection = openConnection() }
-                            val found = connection!!.identify()
+                            val found = connection!!.identifyForRecovery()
                             if (!quick && (found.uniqueKey != expected.uniqueKey || found.manufacturerCode != expected.manufacturerCode)) {
                                 sink.event(wallTime(), "Другой прибор: ${found.uniqueKey}. Данные не объединены")
                                 closeConnection()

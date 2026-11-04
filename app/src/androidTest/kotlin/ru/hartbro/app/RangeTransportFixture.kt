@@ -14,6 +14,7 @@ class RangeTransportFixture(private val app:FieldRegressionApplication):HartTran
         val raw="FE 99 72 05 07 07 28 08 00 5F CA 7F 05 09 00 2C 00 00 99 00 99 01".split(' ').map{it.toInt(16).toByte()}.toByteArray()
         raw[9]=(app.hartDeviceId shr 16).toByte();raw[10]=(app.hartDeviceId shr 8).toByte();raw[11]=app.hartDeviceId.toByte()
         if(app.viatranProfile){raw[1]=0x32;raw[2]=1;raw[4]=5;raw[5]=2}
+        if(app.metran150RProfile){raw[1]=0x26;raw[2]=0x62;raw[4]=5;raw[5]=9}
         return raw
     }
     override suspend fun write(bytes:ByteArray) {

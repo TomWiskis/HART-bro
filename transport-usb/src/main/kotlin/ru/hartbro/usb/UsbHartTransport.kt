@@ -6,6 +6,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import ru.hartbro.core.HartTransport
+import ru.hartbro.core.HartFragment
 
 enum class RtsMode { LOW, HIGH, TRANSMIT_HIGH, TRANSMIT_LOW }
 enum class SerialFlow { NONE, RTS_CTS }
@@ -32,7 +33,7 @@ interface SerialPortIo : AutoCloseable {
 class UsbHartTransport(private val port: SerialPortIo, private val settings: UsbPortSettings,
     private val diagnostic: (String) -> Unit = {}, private val released: () -> Unit = {}) : HartTransport {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
-    private val incoming=Channel<ByteArray>(64)
+    private val incoming=Channel<HartFragment>(64)
     private val writeGate=Mutex()
     private val lock=Any()
     @Volatile private var closed=false
@@ -42,7 +43,7 @@ class UsbHartTransport(private val port: SerialPortIo, private val settings: Usb
     init {
         try {
             port.start({ bytes ->
-                if(!closed && bytes.isNotEmpty() && incoming.trySend(bytes.copyOf()).isFailure)
+                if(!closed && bytes.isNotEmpty() && incoming.trySend(HartFragment(bytes.copyOf())).isFailure)
                     fail(IOException("Переполнена очередь приёма USB; соединение закрыто"))
             },::fail)
         } catch(e:Exception) { close();throw e }
@@ -73,8 +74,9 @@ class UsbHartTransport(private val port: SerialPortIo, private val settings: Usb
         }
     }
     private fun checkOpen() { if(closed)throw IOException("USB-соединение закрыто") }
-    override suspend fun receive()=incoming.receive()
-    override fun discardBufferedInput()=buildList { while(true)add(incoming.tryReceive().getOrNull() ?: break) }
+    override suspend fun receive()=incoming.receive().bytes
+    override suspend fun receiveStamped()=incoming.receive()
+    override fun discardBufferedInput()=buildList { while(true)add(incoming.tryReceive().getOrNull()?.bytes ?: break) }
     fun detached() { diagnostic("USB DETACH: физическое отключение");close() }
     override fun close() {
         synchronized(lock) { if(closed)return;closed=true }

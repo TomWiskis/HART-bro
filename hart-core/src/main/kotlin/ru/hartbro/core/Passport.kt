@@ -81,7 +81,7 @@ interface PassportProfile {
 class PassportProfiles(private val profiles: List<PassportProfile> = emptyList()) {
     fun find(identity: DeviceIdentity) = profiles.firstOrNull { it.documentation.isNotBlank() && it.matches(identity) }
     fun model(identity: DeviceIdentity): String = find(identity)?.model(identity)?.takeIf { it.isNotBlank() }
-        ?: "${identity.manufacturerName ?: identity.manufacturerDescription} · тип 0x%04X".format(identity.deviceType)
+        ?: HartDeviceCatalog.title(identity)
 }
 
 class PassportReader(private val client: HartClient, private val profiles: PassportProfiles = PassportProfiles(),

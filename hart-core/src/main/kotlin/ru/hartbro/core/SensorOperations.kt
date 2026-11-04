@@ -26,6 +26,9 @@ sealed class SensorWrite(val number: Int) {
         override fun bytes() = tag.toByteArray(Charsets.ISO_8859_1).copyOf(32)
     }
     internal class Zero : SensorWrite(43) { override fun bytes() = byteArrayOf() }
+    internal class ZeroMethod(private val method:ru.hartbro.core.ZeroMethod):SensorWrite(method.command) {
+        override fun bytes()=when(val p=method.procedure){ZeroProcedure.Primary43->byteArrayOf();is ZeroProcedure.DeviceVariable52->byteArrayOf(p.variableCode.toByte());is ZeroProcedure.Manufacturer->p.data.toByteArray()}
+    }
 }
 private fun packedTag(tag: String): ByteArray {
     require(tag.length in 0..8 && tag.all { it.code in 32..95 }) { "TAG: до 8 символов ASCII, заглавные буквы" }
@@ -35,10 +38,10 @@ private fun packedTag(tag: String): ByteArray {
     }.toByteArray()
 }
 enum class SensorField(val label: String) { TAG("TAG"), LONG_TAG("Длинный TAG"), DATE("Дата производства"), ZERO("Установка нуля") }
-data class SensorEdit(val identity: DeviceIdentity, val field: SensorField, val original: String, val requested: String)
+data class SensorEdit(val identity: DeviceIdentity, val field: SensorField, val original: String, val requested: String, val zero:ZeroOptions=ZeroOptions(), val communicator:String="")
 data class SensorEditResult(val record: SensorRecord, val configuration: ConfigurationSnapshot?, val identity: DeviceIdentity?)
 
-/** Capability comes from a documented device/revision profile, never from a speculative write. */
+/** Historical support metadata. Standard 43 is no longer gated by these profiles. */
 data class ZeroProfile(val manufacturer: Int, val deviceType: Int, val hartRevisions: Set<Int>, val deviceRevisions: Set<Int>, val documentation: String) {
     init { require(documentation.isNotBlank() && hartRevisions.isNotEmpty() && deviceRevisions.isNotEmpty()) }
     fun matches(i: DeviceIdentity) = i.manufacturerCode == manufacturer && i.deviceType == deviceType && i.hartRevision in hartRevisions && i.deviceRevision in deviceRevisions
@@ -51,8 +54,11 @@ class ZeroProfiles(private val profiles: List<ZeroProfile> = documented) {
 }
 
 /** Identity, protection, untouched fields and readback all belong to one serialized transaction. */
-class SensorOperations(private val client: HartClient, private val zeroProfiles: ZeroProfiles = ZeroProfiles()) {
-    suspend fun apply(edit: SensorEdit, journal: SensorJournal): SensorEditResult = client.transaction {
+class SensorOperations(private val client: HartClient, private val zeroProfiles: ZeroProfiles = ZeroProfiles(),private val zeroMethods:ZeroMethods=ZeroMethods()) {
+    suspend fun prepareZero(identity:DeviceIdentity)=ZeroOperations(client,zeroMethods).prepare(identity)
+    suspend fun apply(edit: SensorEdit, journal: SensorJournal): SensorEditResult {
+        if(edit.field==SensorField.ZERO)return ZeroOperations(client,zeroMethods).apply(edit,journal)
+        return client.transaction {
         val identity = identify()
         if(passportKey(identity) != passportKey(edit.identity)) throw RangeDeviceChanged(edit.identity,identity)
         val info = read(identity.address, ReadCommand.DEVICE_INFORMATION)
@@ -60,8 +66,6 @@ class SensorOperations(private val client: HartClient, private val zeroProfiles:
         require(config15["writeProtect"]?.value == "0") { "Запись защищена или состояние защиты неизвестно" }
         require(info.deviceStatus and 0x80 == 0) { "Прибор сообщает неисправность: ${HartStatus.deviceDescription(info.deviceStatus)}" }
         var original = edit.original
-        var tolerance = 0f
-        var zeroUnit: Int? = null
         val write: SensorWrite = when (edit.field) {
             SensorField.TAG, SensorField.DATE -> {
                 val raw = read(identity.address, ReadCommand.TAG_DESCRIPTION).data
@@ -76,21 +80,7 @@ class SensorOperations(private val client: HartClient, private val zeroProfiles:
                 require(original == edit.original) { "TAG изменился в приборе. Перечитайте его перед записью" }
                 SensorWrite.LongTag(edit.requested)
             }
-            SensorField.ZERO -> {
-                require(zeroProfiles.find(identity) != null) { "Поддержка установки нуля для этой модели и ревизии пока не подтверждена" }
-                val pvReply = read(identity.address, ReadCommand.PRIMARY_VARIABLE)
-                require(pvReply.deviceStatus and 0x81 == 0) { "PV недостоверна: ${HartStatus.deviceDescription(pvReply.deviceStatus)}" }
-                val pv = PrimaryVariable.parse(pvReply.data, pvReply.receivedAt)
-                zeroUnit = pv.unitCode
-                require(pv.unitCode in (1..14).toSet() + setOf(237, 239, 171)) { "PV не является давлением" }
-                val sensor = PassportDecoder.sensor(read(identity.address, ReadCommand.SENSOR_INFORMATION).data)
-                require(sensor.unitCode == pv.unitCode && sensor.lowerLimit != null && sensor.upperLimit != null) { "Недоступны пределы сенсора для проверки нуля" }
-                require(sensor.upperLimit!! > sensor.lowerLimit!!) { "Недостоверные пределы сенсора" }
-                tolerance = maxOf(abs(sensor.upperLimit!! - sensor.lowerLimit!!) * 0.0001f, 0.000001f)
-                require(tolerance.isFinite()) { "Недостоверный допуск проверки" }
-                original = "${pv.value} ${pv.unit}"
-                SensorWrite.Zero()
-            }
+            SensorField.ZERO -> error("Zero uses its dedicated confirmed transaction")
         }
         require(edit.field == SensorField.ZERO || original != edit.requested) { "Значение не изменено" }
         var record = SensorRecord(identity = identity, field = edit.field, original = original, requested = if(edit.field == SensorField.ZERO) "0" else edit.requested)
@@ -114,24 +104,14 @@ class SensorOperations(private val client: HartClient, private val zeroProfiles:
             if(passportKey(found) != passportKey(identity)) throw RangeDeviceChanged(identity,found)
             val actual: String
             val verified: Boolean
-            if (edit.field == SensorField.ZERO) {
-                val readings = (1..3).map {
-                    delay(500)
-                    val reply = read(identity.address, ReadCommand.PRIMARY_VARIABLE)
-                    val pv = PrimaryVariable.parse(reply.data, reply.receivedAt)
-                    require(reply.deviceStatus and 0x81 == 0) { "PV недостоверна: ${HartStatus.deviceDescription(reply.deviceStatus)}" }
-                    pv
-                }
-                actual = readings.joinToString { "${it.value} ${it.unit}" } + "; допуск ±$tolerance"
-                verified = readings.all { abs(it.value) <= tolerance && it.unitCode == zeroUnit }
-            } else {
+
                 val command = if(edit.field == SensorField.LONG_TAG) ReadCommand.LONG_TAG else ReadCommand.TAG_DESCRIPTION
                 val reply = read(identity.address, command)
                 val parameters = if(command == ReadCommand.LONG_TAG) ConfigurationDecoder.longTag(reply.data) else ConfigurationDecoder.tagDescription(reply.data)
                 config = ConfigurationSnapshot(parameters, listOf(ConfigResponse(command.number, reply.data.hex(), reply.receivedAt.toString(), reply.deviceStatus, responseCode = 0)))
                 actual = when(edit.field) { SensorField.TAG -> parameters.getValue("tag").value; SensorField.LONG_TAG -> parameters.getValue("longTag").value; else -> config!!.productionDate?.let(HartDate::format).orEmpty() }
                 verified = actual == edit.requested
-            }
+
             val accepted = exchange == null || exchange.responseCode == 0
             record = record.copy(actual = actual, verifiedAt = Instant.now(), succeeded = verified && accepted && record.stage == WriteStage.SENT,
                 error = listOfNotNull(record.error, if(!accepted) "HART ${exchange!!.responseCode}: ${HartStatus.responseDescription(exchange.responseCode)}" else null,
@@ -140,5 +120,6 @@ class SensorOperations(private val client: HartClient, private val zeroProfiles:
         } catch (e: Exception) { record = record.copy(succeeded = false, error = listOf(record.error, e.message).filterNot { it.isNullOrBlank() }.joinToString("; ")) }
         finally { record = record.copy(stage = WriteStage.FINISHED); journal.save(record) }
         SensorEditResult(record, config, readbackIdentity)
+        }
     }
 }

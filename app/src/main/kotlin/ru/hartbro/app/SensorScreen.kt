@@ -20,7 +20,7 @@ import java.time.Instant
 
 private val success = Color(0xFF168047)
 @Composable internal fun BluetoothBadge(state: SessionState) {
-    val connected = if(state.rangeOwned) state.rangeTransportOpen else if(state.walkActive) state.walk.transportConnected else state.monitor.transportConnected
+    val connected = if(state.captureActive)state.capture.transportConnected else if(state.rangeOwned) state.rangeTransportOpen else if(state.walkActive) state.walk.transportConnected else state.monitor.transportConnected
     val recovering = if(state.rangeOwned) state.range.phase == RangePhase.RECOVERING && !connected else if(state.walkActive) state.walk.recovery?.reason in setOf(LossReason.BLUETOOTH,LossReason.USB)
         else state.monitor.recovery?.reason in setOf(LossReason.BLUETOOTH,LossReason.USB) || state.monitor.phase == MonitorPhase.CONNECTING && !connected
     val usb=state.communicator?.kind==TransportKind.USB
@@ -46,7 +46,7 @@ private val success = Color(0xFF168047)
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(Unit) { while(true) { kotlinx.coroutines.delay(1000); now=Instant.now() } }
     val good=m.hartExchangeCurrent(maxOf(now,Instant.now()))
-    val title=if(showType)sensorTitle(m.identity) else m.identity?.let{listOfNotNull(it.manufacturerName,HartDeviceCatalog.model(it)).joinToString(" · ").ifBlank{"HART-датчик"}} ?: "HART-датчик"
+    val title=if(showType)sensorTitle(m.identity) else m.identity?.let(HartDeviceCatalog::title) ?: "HART-датчик"
     Text("$title  ${if(good) "✓" else "✕"}",color=if(good)success else MaterialTheme.colorScheme.error,
         style=MaterialTheme.typography.titleMedium,modifier=Modifier.testTag("sensorStatus"))
     val r=m.recovery
@@ -65,6 +65,7 @@ private val success = Color(0xFF168047)
 }
 @OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun MonitorScreen(state:SessionState,c:SessionController) {
+    if(state.captureActive){Text("Коммуникатор занят приёмом без запросов. Просмотр — на вкладке HEX.");return}
     if(state.walkActive) { Text("Коммуникатор занят обходом. Завершите обход для мониторинга."); return }
     val m=state.monitor
     if(m.startedAt==null) { QuickSensorCard(state,c); return }
@@ -129,7 +130,7 @@ private val success = Color(0xFF168047)
         val i=d.identity; val config=d.configuration
         Text("Информация об устройстве",style=MaterialTheme.typography.titleMedium)
         Text("Производитель: ${i.manufacturerDescription}")
-        HartDeviceCatalog.model(i)?.let{Text("Модель: $it")}
+        HartDeviceCatalog.entry(i)?.let{Text("Модель: ${it.name}");Text("Реестр: ${it.registeredManufacturer ?: i.manufacturerName}; ${it.sourceUrl}",style=MaterialTheme.typography.bodySmall)}
         Text("Device Type: 0x%04X".format(i.deviceType),modifier=Modifier.testTag("deviceType"))
         Text("Серийный номер: ${i.deviceId}\nHART Revision: ${i.hartRevision}\nВерсия ПО: ${i.softwareRevision}\nРевизия устройства: ${i.deviceRevision}")
         Text("Параметры измерения",style=MaterialTheme.typography.titleMedium)
@@ -166,13 +167,11 @@ private val success = Color(0xFF168047)
 }
 @Composable internal fun SensorEditDialog(state:SessionState,c:SessionController) {
     val edit=state.sensorEdit ?: return
+    if(edit.field==SensorField.ZERO){ZeroEditDialog(state,c);return}
     var value by rememberSaveable(edit.identity.uniqueKey,edit.field,edit.original) { mutableStateOf(edit.requested) }
     ActionDialog(if(state.editConfirm)"Подтвердить: ${edit.field.label}" else edit.field.label,c::closeSensorEdit,"sensorEditDialog",content={
         Text("${sensorTitle(edit.identity)} · ${edit.identity.deviceId}")
-        if(edit.field==SensorField.ZERO) {
-            Text("Подайте нулевое избыточное / дифференциальное давление. Для абсолютного датчика требуется эталонный вакуум. Изолируйте влияние на автоматику перед настройкой.")
-            Text("После одной команды установки нуля приложение проверит PV тремя чтениями. Допуск проверки — 0,01 % ширины пределов сенсора.")
-        } else if(state.editConfirm)Text("${edit.original.ifBlank{"не заполнено"}} → ${edit.requested}")
+        if(state.editConfirm)Text("${edit.original.ifBlank{"не заполнено"}} → ${edit.requested}")
         else OutlinedTextField(value,{value=it},singleLine=true,label={Text(if(edit.field==SensorField.DATE)"ДД.ММ.ГГГГ · по шильду" else edit.field.label)},modifier=Modifier.fillMaxWidth().testTag("sensorEditValue"))
         state.editError?.let{Text(it,color=MaterialTheme.colorScheme.error,modifier=Modifier.testTag("sensorEditError"))}
         if(state.editBusy)LinearProgressIndicator(Modifier.fillMaxWidth())
