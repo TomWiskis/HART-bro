@@ -42,7 +42,7 @@ Android-набор сохраняет все 28 прежних сценарие�
 
 ## Подпись и состав APK
 
-Application ID `ru.hartbro.app`, versionName **0.6.0**, versionCode **12**, minSdk 29, targetSdk 36. Размер 31805801 байт. SHA-256 APK: `b6694757424967413b61c9391d898093048666795d186555344463288e4160e6`.
+Application ID `ru.hartbro.app`, versionName **0.6.0**, versionCode **12**, minSdk 29, targetSdk 36. Размер 32817913 байт. SHA-256 APK: `2d3fafcc09f8b7966edc447c23aefd5e9735955e581fbfb5db5babe955c8f3bb`.
 
 `apksigner verify --print-certs`: SHA-256 сертификата `263b9d04e15c4e42532df3b6a6534e6290890b981c1cefaec4f25622f2385c09`, совпадает с 0.5.3. Тестовые классы отсутствуют в основном APK; INTERNET permission отсутствует. Bluetooth/USB Host объявлены необязательными аппаратными возможностями. Прежние данные читаются; журнал параметров расширен до версии 2 с чтением версии 1.
 

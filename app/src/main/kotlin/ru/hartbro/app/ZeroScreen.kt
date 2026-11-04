@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.*
@@ -18,7 +19,6 @@ import ru.hartbro.core.*
 @OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun ZeroEditDialog(state:SessionState,c:SessionController) {
     val edit=state.sensorEdit ?: return
-    val keyboard=LocalSoftwareKeyboardController.current
     var kind by rememberSaveable(edit.identity.uniqueKey){mutableStateOf(edit.zero.pressureKind)}
     var tolerance by rememberSaveable(edit.identity.uniqueKey){mutableStateOf(edit.zero.tolerance?.toString().orEmpty())}
     var resolution by rememberSaveable(edit.identity.uniqueKey){mutableStateOf(edit.zero.resolution?.toString().orEmpty())}
@@ -28,6 +28,8 @@ import ru.hartbro.core.*
     var methodId by rememberSaveable(edit.identity.uniqueKey){mutableStateOf(edit.zero.methodId)}
     val methods=state.zeroPreparation?.methods ?: ZeroMethods().available(edit.identity)
     ActionDialog(if(state.editConfirm)"Подтвердить установку нуля" else "Установить ноль",c::closeSensorEdit,"sensorEditDialog",content={
+        val keyboard=LocalSoftwareKeyboardController.current
+        val focus=LocalFocusManager.current
         Text("${sensorTitle(edit.identity)} · Device ID ${edit.identity.deviceId}")
         Text("Калибровка изменяет настройку PV. Подготовьте прибор по его процедуре и исключите влияние операции на действующий контур.")
         Text(kind.warning,modifier=Modifier.testTag("zeroPressureWarning"))
@@ -35,9 +37,9 @@ import ru.hartbro.core.*
             FlowRow(horizontalArrangement=Arrangement.spacedBy(4.dp)){PressureKind.entries.forEach{v->FilterChip(kind==v,{kind=v},label={Text(v.label)})}}
             methods.forEach{m->FilterChip(methodId==m.id,{methodId=m.id},label={Text("${m.label} · ${m.command}")})}
             Text("Стандартная команда может быть не поддержана конкретным прибором. Решение определяется его ответом. Автоматического перебора и повтора записи нет.")
-            OutlinedTextField(tolerance,{tolerance=it},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal,imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide()}),label={Text("Допустимое отклонение PV от нуля, необязательно")},modifier=Modifier.fillMaxWidth().testTag("zeroTolerance"))
-            OutlinedTextField(resolution,{resolution=it},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal,imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide()}),label={Text("Разрешение PV, если известно")},modifier=Modifier.fillMaxWidth().testTag("zeroResolution"))
-            OutlinedTextField(source,{source=it},singleLine=true,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide()}),label={Text("Источник допуска / разрешения")},modifier=Modifier.fillMaxWidth().testTag("zeroAccuracySource"))
+            OutlinedTextField(tolerance,{tolerance=it},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal,imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={focus.clearFocus();keyboard?.hide()}),label={Text("Допустимое отклонение PV от нуля, необязательно")},modifier=Modifier.fillMaxWidth().testTag("zeroTolerance"))
+            OutlinedTextField(resolution,{resolution=it},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal,imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={focus.clearFocus();keyboard?.hide()}),label={Text("Разрешение PV, если известно")},modifier=Modifier.fillMaxWidth().testTag("zeroResolution"))
+            OutlinedTextField(source,{source=it},singleLine=true,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={focus.clearFocus();keyboard?.hide()}),label={Text("Источник допуска / разрешения")},modifier=Modifier.fillMaxWidth().testTag("zeroAccuracySource"))
             Text("Без известного допуска результат не будет объявлен подтверждённым измерением. Введённые значения относятся к единице PV, которая будет показана после чтения.")
             Row {Checkbox(pressure,{pressure=it},modifier=Modifier.testTag("zeroPressureConsent"));Text("Подтверждаю: выбран датчик давления")}
             Row {Checkbox(conditions,{conditions=it},modifier=Modifier.testTag("zeroConditionsConsent"));Text("Правильное нулевое воздействие создано, прибор разрешён для настройки")}
