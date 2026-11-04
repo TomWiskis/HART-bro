@@ -304,15 +304,15 @@ class SessionController(private val app: Application, private val captureFactory
         if(state.value.editBusy)return
         mutableState.update{it.copy(editBusy=true,editError=null)}
         scope.launch {archiveActions.withLock {
-            var conn:MonitorConnection?=null;var acquired=false
+            var conn:MonitorConnection?=null;var acquired=false;var different=false
             try {
                 check(options.conditionsConfirmed && options.pressureConfirmed){"Подтвердите условия и тип прибора"}
                 val owner=engine ?: error("Нет подключения")
                 conn=owner.acquireConfiguration();acquired=true;check(conn?.isOpen==true){"Транспорт отключён"}
                 val prep=conn!!.prepareZero(edit.identity)
                 mutableState.update{it.copy(sensorEdit=edit.copy(original=prep.before?.text.orEmpty(),zero=options.copy(unitCode=prep.unitCode)),zeroPreparation=prep,editConfirm=true)}
-            }catch(e:CancellationException){throw e}catch(e:Exception){mutableState.update{it.copy(editError=e.message,editConfirm=false)}}
-            finally {if(acquired)runCatching{engine?.releaseConfiguration(conn,null,true,"Предварительное чтение PV завершено",false)};mutableState.update{it.copy(editBusy=false)}}
+            }catch(e:CancellationException){throw e}catch(e:Exception){different=e is RangeDeviceChanged;mutableState.update{it.copy(editError=e.message,editConfirm=false)}}
+            finally {if(acquired)runCatching{engine?.releaseConfiguration(conn,null,!different,"Предварительное чтение PV завершено"+(if(different)": подключён другой прибор" else ""),different)};mutableState.update{it.copy(editBusy=false)}}
         }}
     }
     fun sensorEditError(message:String){mutableState.update{it.copy(editError=message)}}

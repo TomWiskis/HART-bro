@@ -27,7 +27,7 @@ class Supplement060AndroidTest {
     private fun goodFrame()=InstrumentationRegistry.getInstrumentation().context.assets.open("success-four-ff-043449.txt").bufferedReader().use{it.readLines().last{line->line.matches(Regex("[0-9A-F]{2}( [0-9A-F]{2})+"))}}
     @Before fun before(){
         app.stopRegressionOwners();c.showAnalysis(false);c.closeSensorEdit()
-        app.sensorMode=true;app.viatranProfile=false;app.metran150RProfile=false;app.failIdentity=false;app.identifyDelay=0;app.sensorPv=.25f;app.hartDeviceId=0x5FCA7F
+        app.sensorMode=true;app.viatranProfile=false;app.metran150RProfile=false;app.replaceOnZeroPreparation=null;app.failIdentity=false;app.identifyDelay=0;app.sensorPv=.25f;app.hartDeviceId=0x5FCA7F
         app.rangeTimeout=300;app.rangeMode=0;app.rangeHoldAck=false;app.rangeAckDelay=0;app.rangeActual=ConfiguredRange(0f,16f,12)
         app.hartFailures.set(0);app.bluetoothFailures.set(0);app.walkBluetoothFailures.set(0);app.sensorWrites.set(0);app.rangeWrites.set(0);app.captureWrites.set(0)
         while(app.captureInput.tryReceive().isSuccess){}
@@ -51,14 +51,22 @@ class Supplement060AndroidTest {
             ui.onNodeWithTag("setSensorZero").performScrollTo().performClick();ui.onNodeWithTag("sensorEditApply").assertIsNotEnabled()
             ui.onNodeWithTag("zeroPressureWarning").performScrollTo().assertTextContains("Атмосферное давление нельзя автоматически",substring=true)
             ui.onNodeWithTag("zeroTolerance").performScrollTo().performTextReplacement("0.001")
-            ui.onNodeWithTag("zeroAccuracySource").performScrollTo().performTextReplacement("Test-only accuracy source");ui.onNodeWithTag("zeroAccuracySource").performImeAction()
-            ui.onNodeWithTag("zeroPressureConsent").performScrollTo().performClick();ui.onNodeWithTag("zeroConditionsConsent").performScrollTo().performClick()
+            ui.onNodeWithTag("zeroAccuracySource").performScrollTo().performTextReplacement("Test-only accuracy source");awaitZeroKeyboardHidden(ui)
+            ui.onNodeWithTag("zeroPressureConsent").performScrollTo().performClick();ui.onNodeWithTag("zeroPressureConsent").assertIsOn()
+            ui.onNodeWithTag("zeroConditionsConsent").performScrollTo().performClick();ui.onNodeWithTag("zeroConditionsConsent").assertIsOn()
             ui.onNodeWithTag("sensorEditApply").performClick();waitFor{!c.state.value.editBusy&&c.state.value.editConfirm&&c.state.value.zeroPreparation!=null}
             assertEquals(0,app.sensorWrites.get());s.recreate();ui.onNodeWithTag("zeroBefore").assertTextContains("0.25",substring=true)
             ui.onNodeWithTag("sensorEditApply").performClick();c.confirmSensorEdit();c.confirmSensorEdit()
             waitFor{!c.state.value.editBusy&&c.state.value.sensorRecords.isNotEmpty()}
             val r=c.state.value.sensorRecords.first();assertEquals(43,r.command);assertEquals(SensorOutcome.SUCCEEDED,r.outcome);assertEquals(1,app.sensorWrites.get());assertEquals(0,app.rangeWrites.get());assertEquals(3,r.pvAfter.size)
             assertEquals(16f,app.rangeActual.upper,0f);assertNull(c.state.value.monitor.startedAt)
+            c.beginSession();waitFor{c.state.value.monitor.latest!=null}
+            val started=c.state.value.monitor.startedAt;val id=c.state.value.monitor.identity!!.deviceId
+            c.openSensorEdit(SensorField.ZERO);app.replaceOnZeroPreparation=id+1
+            c.prepareZeroEdit(ZeroOptions(conditionsConfirmed=true,pressureConfirmed=true))
+            waitFor{!c.state.value.editBusy&&c.state.value.editError!=null&&c.state.value.monitor.phase==MonitorPhase.DIFFERENT_DEVICE}
+            assertEquals(started,c.state.value.monitor.startedAt);assertEquals(id,c.state.value.monitor.identity!!.deviceId)
+            assertEquals(1,app.sensorWrites.get());assertEquals(0,app.rangeWrites.get())
         }
     }
     @Test fun importingAndSavingHexAnalysisDoesNotConnectOrWriteAndSurvivesActivityRecreation(){

@@ -33,6 +33,7 @@ class FieldRegressionApplication : HartApplication() {
     @Volatile var sensorMode=false
     @Volatile var viatranProfile=false
     @Volatile var metran150RProfile=false
+    @Volatile var replaceOnZeroPreparation:Int?=null
     val captureWrites=AtomicInteger();val captureOpens=AtomicInteger()
     val captureInput=kotlinx.coroutines.channels.Channel<HartFragment>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     @Volatile var sensorPv=.25f
@@ -69,7 +70,10 @@ class FieldRegressionApplication : HartApplication() {
             private val rangeWire=RangeTransportFixture(this@FieldRegressionApplication)
             private val sensorClient by lazy{HartClient(rangeWire,controller::append,timeoutMillis=rangeTimeout,readAttempts=1)}
             private val rangeOperations by lazy{RangeOperations(sensorClient)}
-            override suspend fun prepareZero(identity:DeviceIdentity)=SensorOperations(sensorClient).prepareZero(identity)
+            override suspend fun prepareZero(identity:DeviceIdentity):ZeroPreparation {
+                replaceOnZeroPreparation?.let{hartDeviceId=it;replaceOnZeroPreparation=null}
+                return SensorOperations(sensorClient).prepareZero(identity)
+            }
             override suspend fun editSensor(edit:SensorEdit,journal:SensorJournal)=SensorOperations(sensorClient).apply(edit,journal)
             override val isOpen get() = open && rangeWire.open
             override suspend fun rangeSnapshot()=rangeOperations.prepare()
