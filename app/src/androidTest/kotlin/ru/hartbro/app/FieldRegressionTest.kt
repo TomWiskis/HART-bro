@@ -110,6 +110,13 @@ class FieldRegressionApplication : HartApplication() {
     }
 }
 class FieldRegressionRunner : AndroidJUnitRunner() {
+    override fun onStart() {
+        sendStatus(2, android.os.Bundle().apply {
+            putString("hartbroProfile", RegressionProfile.name)
+            putLong("hartbroWindowMillis", RegressionProfile.backgroundWindowMillis)
+        })
+        super.onStart()
+    }
     override fun newApplication(cl: ClassLoader, className: String, context: Context): Application =
         super.newApplication(cl, FieldRegressionApplication::class.java.name, context)
 }
@@ -172,12 +179,14 @@ class FieldRegressionTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             start(scenario)
             val started = app.controller.state.value.monitor.startedAt; val key = app.controller.state.value.monitor.identity!!.uniqueKey
-            observeFor(300000, started, key, true, app.packageName) // five actual minutes foreground
-            device.sleep(); observeFor(300000, started, key, false) // five actual minutes screen off
+            val window = RegressionProfile.backgroundWindowMillis
+            val connections = app.connections.get()
+            observeFor(window, started, key, true, app.packageName)
+            device.sleep(); observeFor(window, started, key, false)
             device.wakeUp(); device.executeShellCommand("wm dismiss-keyguard")
             scenario.onActivity { app.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             waitFor { device.currentPackageName == "com.android.settings" }
-            observeFor(300000, started, key, true, "com.android.settings") // five actual minutes with Settings in foreground
+            observeFor(window, started, key, true, "com.android.settings")
             repeat(3) {
                 device.pressHome(); SystemClock.sleep(1200)
                 returnToApp(); SystemClock.sleep(1200)
@@ -190,7 +199,8 @@ class FieldRegressionTest {
             assertTrue(app.getSystemService(NotificationManager::class.java).activeNotifications.any { it.id == 20 })
             val diagnostics = app.controller.diagnosticText()
             assertTrue(diagnostics.contains("onStop: Activity в фоне")); assertTrue(diagnostics.contains("lastTX=")); assertTrue(diagnostics.contains("lastMeasurement="))
-            assertTrue(app.controller.history.bounds()!!.second - app.controller.history.bounds()!!.first >= 900000)
+            assertTrue(app.controller.history.bounds()!!.second - app.controller.history.bounds()!!.first >= window * 3)
+            assertEquals("Activity changes must not open another connection", connections, app.connections.get())
         }
     }
     @Test fun archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList() {

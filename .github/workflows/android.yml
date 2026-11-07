@@ -1,65 +1,126 @@
-name: Android prototype
-on: [push, pull_request, workflow_dispatch]
+name: HART checks
+on:
+  push:
+    branches: [main, 'feature/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'affected = selected changes; full = all fast; soak = all with 3 × 5 min background'
+        type: choice
+        options: [full, affected, soak]
+        default: full
+      base:
+        description: 'Optional comparison commit for manual affected mode; absent/unavailable = all fast checks'
+        type: string
+        required: false
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+# Cancel stale commits, but a duplicate push planning job must not cancel its PR validation.
+concurrency:
+  group: hart-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
-  build-and-test:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.select.outputs.build }}
+      android: ${{ steps.select.outputs.android }}
+      sdk: ${{ steps.select.outputs.sdk }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Verify test routing, native result parser and failure gates
+        run: python3 -m unittest discover -s tools/tests -v
+      - name: Select checks from a verified base
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/resolve-test-plan.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-plan
+          path: test-plan.json
+          retention-days: 30
+
+  build-and-test:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-plan
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v4
+        if: needs.plan.outputs.sdk == 'true'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install Android SDK
+      - name: Install the required SDK only for Android tasks
+        if: needs.plan.outputs.sdk == 'true'
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-      - name: Protocol tests, debug APK and Android lint
-        run: ./gradlew :hart-core:test :transport-usb:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon
+      - name: Selected JVM contracts, APKs once and lint
+        run: python3 .github/scripts/build-selected.py test-plan.json
       - uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.android == 'true'
         with:
-          name: hart-bro-debug
+          name: ci-apks
           path: |
             app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jvm-and-lint-results
+          path: |
             hart-core/build/test-results/test/
             transport-usb/build/test-results/testDebugUnitTest/
             app/build/reports/lint-results-debug.*
+          retention-days: 30
 
-  android-lifecycle-regression:
+  android-regression:
+    needs: [plan, build-and-test]
+    if: needs.plan.outputs.android == 'true' && needs.build-and-test.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Free runner disk space for API 36
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-plan
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-apks
+          path: ci-apks
+      - name: Free space before creating the emulator
         run: |
-          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
-          du -sh /usr/share/dotnet /opt/ghc /usr/share/swift /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          # Unused toolchains on this disposable Android-only runner; keep Java, Gradle and Android SDK.
           sudo rm -rf -- /usr/share/dotnet /opt/ghc /usr/share/swift /opt/hostedtoolcache/CodeQL
           df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          python3 - <<'PY'
+          import shutil
+          assert shutil.disk_usage('.').free >= 10 * 1024**3, 'Insufficient disk space for the AVD'
+          PY
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v4
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Enable KVM for Android emulator
+      - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Diagnose space before installing API 36 image
-        run: |
-          avd_parent="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-          mkdir -p "$avd_parent"
-          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$ANDROID_HOME" "$avd_parent"
-          python3 - <<'PYSPACE'
-          import os, shutil
-          path = os.environ.get('ANDROID_AVD_HOME', os.path.expanduser('~/.android/avd'))
-          free = shutil.disk_usage(path).free
-          minimum = 10 * 1024**3  # Image download/unpack, 2 GiB userdata, Gradle outputs and margin.
-          print(f'AVD filesystem: {free / 1024**3:.2f} GiB free; required headroom: {minimum / 1024**3:.0f} GiB')
-          assert free >= minimum, 'Runner has insufficient disk headroom for Android API 36'
-          PYSPACE
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
@@ -69,55 +130,27 @@ jobs:
           disk-size: 2048M
           ram-size: 2048M
           heap-size: 256M
-          pre-emulator-launch-script: |
-            df -h "${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-            du -sh "${ANDROID_AVD_HOME:-$HOME/.android/avd}"
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash .github/scripts/android-regression.sh
-      - name: Verify Android regression results
+      - name: Verify exact selected coverage and profile
         if: always()
         run: |
-          python3 - <<'PYTEST'
-          import glob, xml.etree.ElementTree as ET
-          counts = {key: 0 for key in ('tests', 'failures', 'errors', 'skipped')}
-          names = set()
-          def annotation(level, text):
-              text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-              print(f'::{level} title=Android regression::{text}')
-          for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
-              root = ET.parse(path).getroot()
-              suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
-              for suite in suites:
-                  for key in counts:
-                      counts[key] += int(suite.get(key, '0'))
-                  for case in suite.iter('testcase'):
-                      names.add(case.get('name'))
-                      for failure in list(case.findall('failure')) + list(case.findall('error')):
-                          annotation('error', (case.get('name', '') + ': ' + (failure.text or failure.get('message', '')))[:5000])
-          expected = {'homeScreenLockAndActivityRecreationKeepOneForegroundSession', 'archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList', 'explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth', 'initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession', 'temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions', 'serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision', 'pdfSingleVariableWithCyrillicMetadataRendersA4', 'pdfDifferentUnitsAndRealGapsRenderA4WithoutInventedSamples', 'longSessionPdfAndCsvKeepAllSourceMeasurements', 'initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession', 'journalRenameCommentSearchComparisonAndConfirmedMultiDelete', 'realControlExcelHas68TimestampRowsAnd269NumericValues', 'realControlPdfGroupsAllSectionsIntoTablesWithReadableGraphAndNoInventedFactoryData'}
-          expected |= {'walkAWaitBReturnHomeAndRecreateKeepOneConnectionAndManualPassport', 'walkCanStartWithoutSensorAndRecoversBluetoothForAnyNextSensor', 'stoppedWalkKeepsDraftAndNewControllerRestoresItWithoutHiddenServiceRestart'}
-          expected |= {'confirmedWriteSurvivesHomeScreenLockAndRecreateWithoutRepeatAndResumesSameSession', 'timeoutAndRestoredPendingJournalUseOnlyVerificationReads', 'walkLocalRangeEditNeverWritesAndExplicitConfigurationKeepsTheBook', 'unknownReadbackPausesPollingAndDeviceReplacementCannotReceivePreparedWrite', 'walkEndAndMonitorTransitionDialogsKeepAllThreeActionsOnSmallLargeFontScreen'}
-          expected |= {'retryIdentificationReconnectsClosedRfcommAfterActivityRecreation'}
-          expected |= {'compactMonitorOpensFreshDiagnosticsAndRangeReplacesFirstInputOnNarrowScreen', 'chartSeekReenablesFollowAndRecreationRetainsChosenScale', 'compactHistoryDeletesOnlyLocalRecordsAfterConfirmation'}
-          expected |= {'quickCardHasNoMeasurementsAndMetadataWritesSurviveRecreationWithVerifiedJournal', 'quickReplacementAndRfcommRecoveryKeepNoSessionUntilExplicitButton', 'documentedPressureZeroNeedsConfirmationWritesOnceAndChecksActualPv'}
-          expected |= {'usbInventoryWithoutHardwareHasNoFictitiousPortAndSelectionSurvivesRecreation', 'usbHartTimeoutKeepsTransportOpenAndRetryAfterActivityRecreationReusesConnection', 'usbDetachImmediatelyClearsIndicatorAndReattachesWithoutStartingSession'}
-          expected |= {'registeredMetran150RUsesCommercialNameAndKeepsRawRosemountIdentityInDiagnostics', 'unknownPressureModelZeroNeedsTwoStepsSurvivesRecreationAndWritesOnce', 'importingAndSavingHexAnalysisDoesNotConnectOrWriteAndSurvivesActivityRecreation', 'passiveCaptureKeepsForegroundOwnerAcrossRecreateWithoutAnyHartTransmit'}
-          passed = counts['tests'] >= 35 and expected.issubset(names) and all(counts[key] == 0 for key in ('failures', 'errors', 'skipped'))
-          annotation('notice' if passed else 'error', str(counts))
-          if not counts['tests']:
-              try:
-                  text = open('/tmp/android-regression-gradle.log').read()
-                  annotation('error', text[-5000:])
-              except FileNotFoundError:
-                  annotation('error', 'Android runner produced no JUnit results or Gradle log')
-          assert passed, counts
-          PYTEST
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          from tools.android_instrumentation import verify_result
+          plan=json.loads(Path('test-plan.json').read_text())
+          result=json.loads(Path('app/build/outputs/androidTest-results/selected/result.json').read_text())
+          counts=verify_result(plan,result,require_soak=os.environ["GITHUB_REF"].startswith("refs/tags/"))
+          print('Verified Android selection:',counts,'profile='+result['profile'])
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-lifecycle-results
+          name: android-results
           path: |
+            test-plan.json
             app/build/outputs/androidTest-results/
-            app/build/reports/androidTests/
             app/build/outputs/export-review/
+          retention-days: 30

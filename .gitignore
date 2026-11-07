@@ -9,3 +9,7 @@ local.properties
 .DS_Store
 
 work/
+
+# Local Python policy/runner checks
+__pycache__/
+*.pyc

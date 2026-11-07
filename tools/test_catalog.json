@@ -1,0 +1,266 @@
+[
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#homeScreenLockAndActivityRecreationKeepOneForegroundSession",
+    "domains": [
+      "session"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList",
+    "domains": [
+      "archive"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth",
+    "domains": [
+      "session",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession",
+    "domains": [
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#retryIdentificationReconnectsClosedRfcommAfterActivityRecreation",
+    "domains": [
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession",
+    "domains": [
+      "connection"
+    ],
+    "priority": 4
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#journalRenameCommentSearchComparisonAndConfirmedMultiDelete",
+    "domains": [
+      "archive"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions",
+    "domains": [
+      "connection",
+      "session"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.FieldRegressionTest#serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision",
+    "domains": [
+      "session"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.Interface052Test#compactMonitorOpensFreshDiagnosticsAndRangeReplacesFirstInputOnNarrowScreen",
+    "domains": [
+      "range",
+      "quick"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.Interface052Test#chartSeekReenablesFollowAndRecreationRetainsChosenScale",
+    "domains": [
+      "chart"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.Interface052Test#compactHistoryDeletesOnlyLocalRecordsAfterConfirmation",
+    "domains": [
+      "range",
+      "archive",
+      "metadata",
+      "zero"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.QuickView053Test#quickCardHasNoMeasurementsAndMetadataWritesSurviveRecreationWithVerifiedJournal",
+    "domains": [
+      "quick",
+      "metadata",
+      "device"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.QuickView053Test#quickReplacementAndRfcommRecoveryKeepNoSessionUntilExplicitButton",
+    "domains": [
+      "quick",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.QuickView053Test#documentedPressureZeroNeedsConfirmationWritesOnceAndChecksActualPv",
+    "domains": [
+      "zero"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.RangeRegressionTest#confirmedWriteSurvivesHomeScreenLockAndRecreateWithoutRepeatAndResumesSameSession",
+    "domains": [
+      "range",
+      "session",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.RangeRegressionTest#timeoutAndRestoredPendingJournalUseOnlyVerificationReads",
+    "domains": [
+      "range",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.RangeRegressionTest#walkLocalRangeEditNeverWritesAndExplicitConfigurationKeepsTheBook",
+    "domains": [
+      "range",
+      "walk"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.RangeRegressionTest#unknownReadbackPausesPollingAndDeviceReplacementCannotReceivePreparedWrite",
+    "domains": [
+      "range",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.RangeRegressionTest#walkEndAndMonitorTransitionDialogsKeepAllThreeActionsOnSmallLargeFontScreen",
+    "domains": [
+      "walk"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.ReportExportTest#pdfSingleVariableWithCyrillicMetadataRendersA4",
+    "domains": [
+      "pdf"
+    ],
+    "priority": 3
+  },
+  {
+    "id": "ru.hartbro.app.ReportExportTest#pdfDifferentUnitsAndRealGapsRenderA4WithoutInventedSamples",
+    "domains": [
+      "pdf"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.ReportExportTest#longSessionPdfAndCsvKeepAllSourceMeasurements",
+    "domains": [
+      "pdf",
+      "csv"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.ReportExportTest#realControlExcelHas68TimestampRowsAnd269NumericValues",
+    "domains": [
+      "xlsx"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.ReportExportTest#realControlPdfGroupsAllSectionsIntoTablesWithReadableGraphAndNoInventedFactoryData",
+    "domains": [
+      "pdf"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.Supplement060AndroidTest#registeredMetran150RUsesCommercialNameAndKeepsRawRosemountIdentityInDiagnostics",
+    "domains": [
+      "device"
+    ],
+    "priority": 2
+  },
+  {
+    "id": "ru.hartbro.app.Supplement060AndroidTest#unknownPressureModelZeroNeedsTwoStepsSurvivesRecreationAndWritesOnce",
+    "domains": [
+      "zero"
+    ],
+    "priority": 5
+  },
+  {
+    "id": "ru.hartbro.app.Supplement060AndroidTest#importingAndSavingHexAnalysisDoesNotConnectOrWriteAndSurvivesActivityRecreation",
+    "domains": [
+      "capture"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.Supplement060AndroidTest#passiveCaptureKeepsForegroundOwnerAcrossRecreateWithoutAnyHartTransmit",
+    "domains": [
+      "capture"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.Usb060Test#usbInventoryWithoutHardwareHasNoFictitiousPortAndSelectionSurvivesRecreation",
+    "domains": [
+      "usb"
+    ],
+    "priority": 1
+  },
+  {
+    "id": "ru.hartbro.app.Usb060Test#usbHartTimeoutKeepsTransportOpenAndRetryAfterActivityRecreationReusesConnection",
+    "domains": [
+      "usb",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.Usb060Test#usbDetachImmediatelyClearsIndicatorAndReattachesWithoutStartingSession",
+    "domains": [
+      "usb",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.WalkRegressionTest#walkAWaitBReturnHomeAndRecreateKeepOneConnectionAndManualPassport",
+    "domains": [
+      "walk",
+      "device"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.WalkRegressionTest#walkCanStartWithoutSensorAndRecoversBluetoothForAnyNextSensor",
+    "domains": [
+      "walk",
+      "connection"
+    ],
+    "priority": 50
+  },
+  {
+    "id": "ru.hartbro.app.WalkRegressionTest#stoppedWalkKeepsDraftAndNewControllerRestoresItWithoutHiddenServiceRestart",
+    "domains": [
+      "walk"
+    ],
+    "priority": 50
+  }
+]
