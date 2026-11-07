@@ -1,0 +1,338 @@
+{
+  "schema": 1,
+  "date": "2026-11-07",
+  "scope": "Test and CI optimization only. Production source, version and published APK are unchanged.",
+  "source_commit": "a489b98f58cd7dfee46be04272ae33cba37a7c43",
+  "branch": "feature/0.6.0-usb-walk",
+  "baseline": {
+    "run_id": 41836778660,
+    "url": "https://github.com/TomWiskis/HART-bro/actions/runs/41836778660",
+    "source_commit": "cc0cc2c09c9e3de59194889a071c3d6b13afdd1c",
+    "profile": "3 x 300000 ms",
+    "workflow_seconds": 1543,
+    "jobs": [
+      {
+        "id": 126597617297,
+        "name": "android-lifecycle-regression",
+        "started_at": "2026-11-04T13:17:42Z",
+        "completed_at": "2026-11-04T13:43:23Z",
+        "seconds": 1541,
+        "conclusion": "success"
+      },
+      {
+        "id": 126597617819,
+        "name": "build-and-test",
+        "started_at": "2026-11-04T13:17:43Z",
+        "completed_at": "2026-11-04T13:22:03Z",
+        "seconds": 260,
+        "conclusion": "success"
+      }
+    ],
+    "android_unique_cases": 35,
+    "android_executions": 54,
+    "duplicate_executions": 19,
+    "full_android_gradle_seconds": 1072,
+    "core_suite_seconds": 3.376,
+    "usb_suite_seconds": 5.004
+  },
+  "validation": {
+    "run_id": 42346326960,
+    "url": "https://github.com/TomWiskis/HART-bro/actions/runs/42346326960",
+    "conclusion": "success",
+    "profile": "fast",
+    "background_window_ms": 20000,
+    "workflow_seconds": 874,
+    "jobs": [
+      {
+        "id": 128324761317,
+        "name": "plan",
+        "started_at": "2026-11-07T06:17:20Z",
+        "completed_at": "2026-11-07T06:17:29Z",
+        "seconds": 9,
+        "conclusion": "success"
+      },
+      {
+        "id": 128324800951,
+        "name": "build-and-test",
+        "started_at": "2026-11-07T06:17:31Z",
+        "completed_at": "2026-11-07T06:22:55Z",
+        "seconds": 324,
+        "conclusion": "success"
+      },
+      {
+        "id": 128326065818,
+        "name": "android-regression",
+        "started_at": "2026-11-07T06:22:57Z",
+        "completed_at": "2026-11-07T06:31:51Z",
+        "seconds": 534,
+        "conclusion": "success"
+      }
+    ],
+    "policy_tests": {
+      "tests": 33,
+      "failures": 0,
+      "seconds": 1.54
+    },
+    "jvm": {
+      "core_methods": 247,
+      "usb_methods": 18,
+      "core_classes": 26,
+      "usb_classes": 4,
+      "status": "success",
+      "evidence": "All inventory classes selected in successful Gradle test tasks; JUnit reports retained in jvm-and-lint-results artifact."
+    },
+    "android": {
+      "tests": 35,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duplicate_executions": 0,
+      "preflight": 3,
+      "remaining": 32,
+      "reported_native_profile": "fast",
+      "profile_window_ms": 20000,
+      "preflight_started_at": "2026-11-07T06:25:54.4674231Z",
+      "finished_at": "2026-11-07T06:31:47.4459111Z",
+      "selected_phases_seconds": 352.978488,
+      "case_seconds": 339.2,
+      "coverage": "PASSED native IDs independently matched every catalog entry exactly once; workflow verified result.json and runtime profile.",
+      "compilation_in_emulator_job": false,
+      "cases": [
+        {
+          "id": "ru.hartbro.app.Interface052Test#compactMonitorOpensFreshDiagnosticsAndRangeReplacesFirstInputOnNarrowScreen",
+          "seconds": 44.73
+        },
+        {
+          "id": "ru.hartbro.app.Interface052Test#compactHistoryDeletesOnlyLocalRecordsAfterConfirmation",
+          "seconds": 10.65
+        },
+        {
+          "id": "ru.hartbro.app.Interface052Test#chartSeekReenablesFollowAndRecreationRetainsChosenScale",
+          "seconds": 14.61
+        },
+        {
+          "id": "ru.hartbro.app.Usb060Test#usbHartTimeoutKeepsTransportOpenAndRetryAfterActivityRecreationReusesConnection",
+          "seconds": 9.67
+        },
+        {
+          "id": "ru.hartbro.app.Usb060Test#usbDetachImmediatelyClearsIndicatorAndReattachesWithoutStartingSession",
+          "seconds": 6.51
+        },
+        {
+          "id": "ru.hartbro.app.Usb060Test#usbInventoryWithoutHardwareHasNoFictitiousPortAndSelectionSurvivesRecreation",
+          "seconds": 3.58
+        },
+        {
+          "id": "ru.hartbro.app.Supplement060AndroidTest#importingAndSavingHexAnalysisDoesNotConnectOrWriteAndSurvivesActivityRecreation",
+          "seconds": 4.13
+        },
+        {
+          "id": "ru.hartbro.app.Supplement060AndroidTest#unknownPressureModelZeroNeedsTwoStepsSurvivesRecreationAndWritesOnce",
+          "seconds": 14.09
+        },
+        {
+          "id": "ru.hartbro.app.Supplement060AndroidTest#registeredMetran150RUsesCommercialNameAndKeepsRawRosemountIdentityInDiagnostics",
+          "seconds": 3.38
+        },
+        {
+          "id": "ru.hartbro.app.Supplement060AndroidTest#passiveCaptureKeepsForegroundOwnerAcrossRecreateWithoutAnyHartTransmit",
+          "seconds": 2.28
+        },
+        {
+          "id": "ru.hartbro.app.ReportExportTest#realControlExcelHas68TimestampRowsAnd269NumericValues",
+          "seconds": 0.58
+        },
+        {
+          "id": "ru.hartbro.app.ReportExportTest#longSessionPdfAndCsvKeepAllSourceMeasurements",
+          "seconds": 21.78
+        },
+        {
+          "id": "ru.hartbro.app.ReportExportTest#pdfDifferentUnitsAndRealGapsRenderA4WithoutInventedSamples",
+          "seconds": 1.25
+        },
+        {
+          "id": "ru.hartbro.app.ReportExportTest#realControlPdfGroupsAllSectionsIntoTablesWithReadableGraphAndNoInventedFactoryData",
+          "seconds": 4.32
+        },
+        {
+          "id": "ru.hartbro.app.ReportExportTest#pdfSingleVariableWithCyrillicMetadataRendersA4",
+          "seconds": 0.8
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#archiveBackRemainsVisibleAfterScrollingAndSystemBackReturnsToList",
+          "seconds": 11.59
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#temporaryHartAndBluetoothLossRecoverWithoutDuplicateSessions",
+          "seconds": 6.45
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#retryIdentificationReconnectsClosedRfcommAfterActivityRecreation",
+          "seconds": 2.11
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#initialConnectionWhileActivityIsBackgroundedRemainsReadyWithoutSession",
+          "seconds": 6.66
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#explicitSessionStartPauseSaveFinishAndNewDeviceReuseBluetooth",
+          "seconds": 4.17
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#initialIdentificationFailureWhileActivityIsBackgroundedDoesNotCreateSession",
+          "seconds": 12.04
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#homeScreenLockAndActivityRecreationKeepOneForegroundSession",
+          "seconds": 74.99
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#journalRenameCommentSearchComparisonAndConfirmedMultiDelete",
+          "seconds": 7.6
+        },
+        {
+          "id": "ru.hartbro.app.FieldRegressionTest#serviceDestructionKeepsTemporaryHistoryUntilExplicitUserDecision",
+          "seconds": 1.18
+        },
+        {
+          "id": "ru.hartbro.app.QuickView053Test#documentedPressureZeroNeedsConfirmationWritesOnceAndChecksActualPv",
+          "seconds": 5.59
+        },
+        {
+          "id": "ru.hartbro.app.QuickView053Test#quickReplacementAndRfcommRecoveryKeepNoSessionUntilExplicitButton",
+          "seconds": 7.75
+        },
+        {
+          "id": "ru.hartbro.app.QuickView053Test#quickCardHasNoMeasurementsAndMetadataWritesSurviveRecreationWithVerifiedJournal",
+          "seconds": 9.15
+        },
+        {
+          "id": "ru.hartbro.app.RangeRegressionTest#walkEndAndMonitorTransitionDialogsKeepAllThreeActionsOnSmallLargeFontScreen",
+          "seconds": 7.6
+        },
+        {
+          "id": "ru.hartbro.app.RangeRegressionTest#confirmedWriteSurvivesHomeScreenLockAndRecreateWithoutRepeatAndResumesSameSession",
+          "seconds": 8.87
+        },
+        {
+          "id": "ru.hartbro.app.RangeRegressionTest#unknownReadbackPausesPollingAndDeviceReplacementCannotReceivePreparedWrite",
+          "seconds": 8.79
+        },
+        {
+          "id": "ru.hartbro.app.RangeRegressionTest#walkLocalRangeEditNeverWritesAndExplicitConfigurationKeepsTheBook",
+          "seconds": 3.06
+        },
+        {
+          "id": "ru.hartbro.app.RangeRegressionTest#timeoutAndRestoredPendingJournalUseOnlyVerificationReads",
+          "seconds": 3.83
+        },
+        {
+          "id": "ru.hartbro.app.WalkRegressionTest#walkCanStartWithoutSensorAndRecoversBluetoothForAnyNextSensor",
+          "seconds": 3.64
+        },
+        {
+          "id": "ru.hartbro.app.WalkRegressionTest#stoppedWalkKeepsDraftAndNewControllerRestoresItWithoutHiddenServiceRestart",
+          "seconds": 2.16
+        },
+        {
+          "id": "ru.hartbro.app.WalkRegressionTest#walkAWaitBReturnHomeAndRecreateKeepOneConnectionAndManualPassport",
+          "seconds": 9.61
+        }
+      ]
+    },
+    "build_apk": "success",
+    "build_test_apk": "success",
+    "lint": "success",
+    "artifacts": [
+      {
+        "id": 13564091929,
+        "name": "jvm-and-lint-results",
+        "digest": "sha256:520e3adc6b27edc2bb20cf9f29772b87559368827e36d802d36e95ff47a1e354",
+        "size_in_bytes": 65908
+      },
+      {
+        "id": 13564091926,
+        "name": "ci-apks",
+        "digest": "sha256:fff81bca28e35e6000c2733381479223217dc56db9ba64840e1aac6c99ac1201",
+        "size_in_bytes": 11896997
+      },
+      {
+        "id": 13563922578,
+        "name": "android-results",
+        "digest": "sha256:ba72184aaa046b873e4f296f31db607fcb92c0f1ac7c188dff663c0d44ade43b",
+        "size_in_bytes": 1075684
+      },
+      {
+        "id": 13563613523,
+        "name": "test-plan",
+        "digest": "sha256:4bdd2e62533a3ebe867d09bb2f78d329e462a2e4d37c3678d7bf840b5f23083d",
+        "size_in_bytes": 2375
+      }
+    ]
+  },
+  "measured_workflow_reduction_percent": 43.4,
+  "limits": [
+    "Single GitHub-hosted runner comparison; hardware, downloads and caches affect wall times.",
+    "Fast lifecycle coverage uses 3 x 20 real seconds and is not equivalent to a 3 x 5 minute soak.",
+    "The original full 3 x 5 minute soak remains required for APK release. No new APK was released in this task.",
+    "Android transport fixtures verify application behavior, not physical modem or sensor compatibility."
+  ],
+  "failure_gates": {
+    "policy_cli_install_failure": "No test instrumentation launched (regression test).",
+    "policy_cli_preflight_failure": "Remaining phase blocked (regression test).",
+    "real_validation": {
+      "run_id": 42344947874,
+      "android_job_id": 128321390199,
+      "passed_before_failure": 19,
+      "failed": 1,
+      "not_run": 15,
+      "conclusion": "failure; early stop, never accepted as passed",
+      "fix": "Hide actual Activity IME and await zero IME insets before the real range button touch. Assertions and actual command 35 checks retained."
+    }
+  },
+  "local_validation": {
+    "policy_tests": 33,
+    "selected_core_tests": 13,
+    "selected_usb_tests": 4,
+    "apk_and_lint": "success",
+    "followup_test_apk_and_lint": "success",
+    "full_local_rerun": false,
+    "reason": "Production JVM source unchanged; CI validates complete shared harness scope."
+  },
+  "selection_examples": {
+    "documentation": {
+      "core_classes": 0,
+      "usb_classes": 0,
+      "android": 0,
+      "build": false,
+      "sdk": false
+    },
+    "zero_screen": {
+      "core_classes": 0,
+      "usb_classes": 0,
+      "android": 3
+    },
+    "monitoring_chart": {
+      "core_classes": 0,
+      "usb_classes": 0,
+      "android": 1
+    },
+    "session_pdf": {
+      "core_classes": 0,
+      "usb_classes": 0,
+      "android": 4
+    },
+    "one_core_test": {
+      "core_classes": 1,
+      "usb_classes": 0,
+      "android": 0,
+      "apk": false
+    },
+    "unknown_production": {
+      "core_classes": 26,
+      "usb_classes": 4,
+      "android": 35
+    }
+  },
+  "published_apk_sha256": "2d3fafcc09f8b7966edc447c23aefd5e9735955e581fbfb5db5babe955c8f3bb"
+}
