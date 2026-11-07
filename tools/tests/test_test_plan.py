@@ -61,6 +61,12 @@ class TestSelection(unittest.TestCase):
         self.assertFalse(set(p['preflight'])&set(p['remaining']))
         self.assertEqual(set(p['android']),set(p['preflight']+p['remaining']))
 
+    def test_small_edited_ui_class_is_the_gate_even_when_shared_changes_require_full_coverage(self):
+        p=make_plan(['.github/workflows/android.yml','app/src/androidTest/kotlin/ru/hartbro/app/RegressionProfile.kt','app/src/androidTest/kotlin/ru/hartbro/app/Interface052Test.kt'])
+        self.assertEqual(35,len(p['android']));self.assertEqual(3,len(p['preflight']))
+        self.assertTrue(all('Interface052Test#' in key for key in p['preflight']))
+        self.assertEqual(32,len(p['remaining']));self.assertFalse(set(p['preflight'])&set(p['remaining']))
+
     def test_real_catalogue_covers_every_existing_test(self):
         a,c,u,_=validate_catalog();self.assertEqual((35,247,18),(len(a),len(c),len(u)))
         catalog=json.loads((ROOT/'tools/test_catalog.json').read_text())

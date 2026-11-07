@@ -3,6 +3,9 @@ package ru.hartbro.app
 import android.Manifest
 import android.content.Intent
 import android.os.SystemClock
+import android.view.inputmethod.InputMethodManager
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -71,7 +74,15 @@ class Interface052Test {
             ui.onNodeWithTag("rangeUnits").performClick()
             assertEquals(setOf(12),c.state.value.range.snapshot!!.writableUnits)
             ui.onNodeWithText("кПа",useUnmergedTree=true).performClick()
-            ui.onNodeWithTag("rangeSet").performScrollTo().performClick();waitFor{c.state.value.range.phase==RangePhase.CONFIRM}
+            // Numeric IME/viewport animation must finish before injecting touch coordinates.
+            s.onActivity{a->a.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(a.window.decorView.windowToken,0)}
+            waitFor {
+                var hidden=false
+                s.onActivity{a->val i=ViewCompat.getRootWindowInsets(a.window.decorView);hidden=i!=null&&!i.isVisible(WindowInsetsCompat.Type.ime())&&i.getInsets(WindowInsetsCompat.Type.ime()).bottom==0}
+                hidden
+            }
+            ui.waitForIdle()
+            ui.onNodeWithTag("rangeSet").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick();waitFor{c.state.value.range.phase==RangePhase.CONFIRM}
             assertEquals(0,app.rangeWrites.get());ui.onNodeWithTag("rangeConfirmWrite").performClick()
             waitFor{c.state.value.range.record?.outcome==RangeOutcome.SUCCEEDED && !c.state.value.rangeOwned}
             assertEquals(1,app.rangeWrites.get());assertEquals(-2.5f,app.rangeActual.lower,0f);assertEquals(20f,app.rangeActual.upper,0f)

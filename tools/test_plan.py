@@ -148,6 +148,7 @@ def make_plan(files: list[str] | None, mode: str = 'affected', root: Path = ROOT
         raise ValueError('mode must be affected, full or soak')
     android, core, usb, catalog = validate_catalog(root)
     core_classes, usb_classes, android_ids, domains = set(), set(), set(), set()
+    directly_changed_android = set()
     reasons = []
     full = mode != 'affected' or files is None
     build_apk = lint = False
@@ -207,7 +208,7 @@ def make_plan(files: list[str] | None, mode: str = 'affected', root: Path = ROOT
             # This file also contains the Application/runner fixture shared by all Android tests.
             full = True; reasons.append('Shared Android Application fixture changed'); continue
         if owned:
-            android_ids.update(owned); continue
+            android_ids.update(owned); directly_changed_android.update(owned); continue
         if path.startswith('app/src/androidTest/'):
             android_ids.update(android); continue  # Rules/helpers can affect every UI scenario.
         full = True; reasons.append(f'Unmapped/build/resource change: {path}')
@@ -218,10 +219,12 @@ def make_plan(files: list[str] | None, mode: str = 'affected', root: Path = ROOT
         build_apk = lint = True
     else:
         android_ids.update(c['id'] for c in catalog if domains.intersection(c['domains']))
-    ordered = sorted(android_ids, key=lambda key: (next(c.get('priority', 50) for c in catalog if c['id']==key), key))
-    # Small, disjoint gate: a setup/assertion failure never starts the remaining regression.
-    preflight = ordered[:1]
-    remaining = ordered[1:]
+    priority = lambda key: (next(c.get('priority', 50) for c in catalog if c['id']==key), key)
+    ordered = sorted(android_ids, key=priority)
+    # Check a small edited test class first, even when unverified shared changes require the full set.
+    # This diagnoses a local harness failure before unrelated/longer regression cases, without repeats.
+    preflight = sorted(directly_changed_android,key=priority) if 0 < len(directly_changed_android) <= 3 else ordered[:1]
+    remaining = [key for key in ordered if key not in preflight]
     if android_ids:
         build_apk = lint = True
     return {
